@@ -1,0 +1,257 @@
+{
+    "TemporalFusionTransformer": {
+        "hyperparameters": {
+            "attention_head_size": {
+                "trial_suggest": "suggest_int"
+            },
+            "categorical_groups": {},
+            "causal_attention": {
+                "trial_suggest": "suggest_categorical"
+            },
+            "dropout": {
+                "trial_suggest": "suggest_float"
+            },
+            "embedding_labels": {},
+            "embedding_paddings": {},
+            "embedding_sizes": {},
+            "hidden_continuous_size": {
+                "trial_suggest": "suggest_int"
+            },
+            "hidden_continuous_sizes": {},
+            "hidden_size": {
+                "trial_suggest": "suggest_int"
+            },
+            "learning_rate": {
+                "trial_suggest": "suggest_float"
+            },
+            "log_gradient_flow": {
+                "trial_suggest": "suggest_categorical"
+            },
+            "log_interval": {
+                "trial_suggest": "suggest_int"
+            },
+            "log_val_interval": {
+                "trial_suggest": "suggest_int"
+            },
+            "logging_metrics": {},
+            "loss": {
+                "trial_suggest": "suggest_categorical"
+            },
+            "lstm_layers": {
+                "trial_suggest": "suggest_int"
+            },
+            "max_encoder_length": {
+                "trial_suggest": "suggest_int"
+            },
+            "monotone_constaints": {},
+            "output_size": {
+                "trial_suggest": "suggest_int"
+            },
+            "reduce_on_plateau_patience": {
+                "trial_suggest": "suggest_int"
+            },
+            "share_single_variable_networks": {
+                "trial_suggest": "suggest_categorical"
+            },
+            "static_categoricals": {},
+            "static_reals": {},
+            "time_varying_categoricals_decoder": {},
+            "time_varying_categoricals_encoder": {},
+            "time_varying_reals_decoder": {},
+            "time_varying_reals_encoder": {},
+            "x_categoricals": {},
+            "x_reals": {}
+        }
+    },
+    "DeepAR": {
+        "hyperparameters": {
+            "categorical_groups": {},
+            "cell_type": {
+                "trial_suggest": "suggest_categorical"
+            },
+            "dropout": {
+                "trial_suggest": "suggest_float"
+            },
+            "embedding_labels": {},
+            "embedding_paddings": {},
+            "embedding_sizes": {},
+            "hidden_size": {
+                "trial_suggest": "suggest_int"
+            },
+            "logging_metrics": {},
+            "loss": {
+                "trial_suggest": "suggest_categorical"
+            },
+            "n_plotting_samples": {
+                "trial_suggest": "suggest_int"
+            },
+            "n_validation_samples": {
+                "trial_suggest": "suggest_int"
+            },
+            "rnn_layers": {
+                "trial_suggest": "suggest_int"
+            },
+            "static_categoricals": {},
+            "static_reals": {},
+            "target": {},
+            "target_lags": {},
+            "time_varying_categoricals_decoder": {},
+            "time_varying_categoricals_encoder": {},
+            "time_varying_reals_decoder": {},
+            "time_varying_reals_encoder": {},
+            "x_categoricals": {},
+            "x_reals": {}
+        }
+    },
+    "NHiTS": {
+        "hyperparameters": {
+            "activation": {
+                "trial_suggest": "suggest_categorical"
+            },
+            "backcast_loss_ratio": {
+                "trial_suggest": "suggest_float"
+            },
+            "batch_normalization": {
+                "trial_suggest": "suggest_categorical"
+            },
+            "categorical_groups": {},
+            "context_length": {
+                "trial_suggest": "suggest_int"
+            },
+            "downsample_frequencies": {
+                "trial_suggest": "suggest_int"
+            },
+            "dropout": {
+                "trial_suggest": "suggest_float"
+            },
+            "embedding_labels": {},
+            "embedding_paddings": {},
+            "embedding_sizes": {},
+            "hidden_continuous_size": {
+                "trial_suggest": "suggest_int"
+            },
+            "hidden_continuous_sizes": {},
+            "hidden_size": {
+                "trial_suggest": "suggest_int"
+            },
+            "initialization": {
+                "trial_suggest": "suggest_categorical"
+            },
+            "interpolation_mode": {
+                "trial_suggest": "suggest_categorical"
+            },
+            "learning_rate": {
+                "trial_suggest": "suggest_float"
+            },
+            "log_gradient_flow": {
+                "trial_suggest": "suggest_categorical"
+            },
+            "log_interval": {
+                "trial_suggest": "suggest_int"
+            },
+            "log_val_interval": {
+                "trial_suggest": "suggest_int"
+            },
+            "logging_metrics": {},
+            "loss": {
+                "trial_suggest": "suggest_categorical"
+            },
+            "n_blocks": {
+                "trial_suggest": "suggest_int"
+            },
+            "n_layers": {
+                "trial_suggest": "suggest_int"
+            },
+            "naive_level": {
+                "trial_suggest": "suggest_categorical"
+            },
+            "output_size": {
+                "trial_suggest": "suggest_int"
+            },
+            "pooling_mode": {
+                "trial_suggest": "suggest_categorical"
+            },
+            "pooling_sizes": {
+                "trial_suggest": "suggest_int"
+            },
+            "prediction_length": {
+                "trial_suggest": "suggest_int"
+            },
+            "reduce_on_plateau_patience": {
+                "trial_suggest": "suggest_int"
+            },
+            "shared_weights": {
+                "trial_suggest": "suggest_categorical"
+            },
+            "static_categoricals": {},
+            "static_hidden_size": {
+                "trial_suggest": "suggest_int"
+            },
+            "static_reals": {},
+            "time_varying_categoricals_decoder": {},
+            "time_varying_categoricals_encoder": {},
+            "time_varying_reals_decoder": {},
+            "time_varying_reals_encoder": {},
+            "x_categoricals": {},
+            "x_reals": {}
+        }
+    },
+    "RecurrentNetwork": {
+        "hyperparameters": {
+            "categorical_groups": {},
+            "cell_type": {
+                "trial_suggest": "suggest_categorical"
+            },
+            "dropout": {
+                "trial_suggest": "suggest_float"
+            },
+            "embedding_labels": {},
+            "embedding_paddings": {},
+            "embedding_sizes": {},
+            "hidden_size": {
+                "trial_suggest": "suggest_int"
+            },
+            "logging_metrics": {},
+            "loss": {
+                "trial_suggest": "suggest_categorical"
+            },
+            "output_size": {
+                "trial_suggest": "suggest_int"
+            },
+            "rnn_layers": {
+                "trial_suggest": "suggest_int"
+            },
+            "static_categoricals": {},
+            "static_reals": {},
+            "target": {},
+            "target_lags": {},
+            "time_varying_categoricals_decoder": {},
+            "time_varying_categoricals_encoder": {},
+            "time_varying_reals_decoder": {},
+            "time_varying_reals_encoder": {},
+            "x_categoricals": {},
+            "x_reals": {}
+        }
+    },
+
+    "common": {
+        "batch_size": {
+            "trial_suggest": "suggest_int"
+        },
+        "epochs": {
+            "trial_suggest": "suggest_int"
+        },
+        "gradient_clip_val": {
+            "trial_suggest": "suggest_float"
+        },
+        "max_encoder_length": {
+            "trial_suggest": "suggest_int"
+        },
+        "max_prediction_length": {
+            "trial_suggest": "suggest_int"
+        },
+        "random_state" :  {
+            "trial_suggest": "suggest_int"
+        }
+    }
+}

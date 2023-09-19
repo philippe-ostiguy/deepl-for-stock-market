@@ -1,0 +1,10 @@
+coffee
+copper
+corn
+cotton
+gold
+oats
+platinum
+soybean
+sugar
+wheat

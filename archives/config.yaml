@@ -1,0 +1,177 @@
+common :
+  start_date : '2005-06-05'
+  end_date : '2023-06-15'
+  max_missing_data : .02
+  fetching : False
+  preprocessing : False
+  engineering : False
+  model_phase : 'train'
+  is_torch_metric_return : True
+  train_test_split : [.7,.15,.15]
+  correlation_threshold : 0.6
+  min_validation_forecasts : 95
+  hyperparameters_optimization :
+    is_pruning : True
+    is_optimizing : False
+    nb_trials : 30
+    is_using_optimized_hyper : False
+
+
+  scaling: True
+  metrics_to_choose_model :
+    - 'return_on_risk'
+
+inputs:
+  past_covariates :
+  #  - source: 'reddit'
+  #    data:
+  #      - 'reddit'
+  #    size: 100
+    - source: 'av'
+      data:
+        - 'SPY'
+#        - 'set_dynamically_50_largest_stocks'
+        - 'NATURAL_GAS'
+        - '3month'
+        - '10year'
+        - '2year'
+        - 'EUR'
+        - 'WTI'
+        - 'MSFT'
+        - 'GOOGL'
+        - 'AAPL'
+        - 'AMZN'
+    - source : 'fred'
+      data:
+#        - 'set_dynamically'
+        - 'T5YIE'
+        - 'T10YIE'
+        - 'DEXUSNZ'
+        - 'VIXCLS'
+    - source : 'macrotrends'
+      data :
+#         - 'set_dynamically'
+         - 'wheat'
+         - 'corn'
+  future_covariates :
+      data:
+        - 'day'
+        - 'month'
+
+output :
+  source : 'av'
+  data : 'SPY'
+  attributes :
+    - '4. close'
+    - '1. open'
+
+hyperparameters:
+  common:
+    batch_size: 16
+    n_epochs: 100
+    nr_epochs_val_period: 1
+    dropout: 0.1
+    activation: "ReLU"
+    #num_loader_workers : 4
+    random_state: 42
+    optimizer_kwargs: {"lr": 0.001}
+    lr_scheduler_cls: ""
+    lr_scheduler_kwargs:
+      max_lr: null
+      total_steps: null
+      pct_start: 0.1
+      anneal_strategy: "linear"
+      cycle_momentum: False
+    save_checkpoints: True
+    force_reset: True
+    #likelihood: [.05,.1]
+    loss_fn: MSELoss
+    input_chunk_length: 32
+    output_chunk_length: 1
+    num_samples : 1
+    n_jobs : 3
+    #torch_metrics : 'PortfolioReturnMetric'
+    callbacks :
+      EarlyStopping :
+        monitor : 'val_loss'
+        patience : 20
+        verbose : False
+        mode : 'min'
+#      ModelCheckPoint :
+#        monitor : 'val_PortfolioReturnMetric'
+#        mode : 'max'
+#        save_top_k : 1
+#        filename : 'best_model'
+    pl_trainer_kwargs :
+      callbacks:
+        - 'EarlyStopping'
+        #- 'ModelCheckPoint'
+  models :
+
+    TiDEModel:
+      num_encoder_layers: 1
+      num_decoder_layers: 1
+      decoder_output_dim: 8
+      hidden_size: 256
+      temporal_width: 4
+      temporal_decoder_hidden: 32
+      use_layer_norm: False
+      use_reversible_instance_norm: False
+    TFTModel:
+      num_attention_heads: 4
+      hidden_size: 64
+      hidden_continuous_size: 16
+      lstm_layers: 2
+      full_attention: False
+      add_relative_index : True
+#    TransformerModel:
+#      d_model: 8
+#      nhead: 4
+#      num_encoder_layers: 4
+#      num_decoder_layers: 4
+#      dim_feedforward: 128
+#    NBEATSModel:
+#      num_blocks: 3
+#      num_stacks: 16
+#      num_layers: 2
+#      layer_widths: 128
+
+hyperparameters_optimization:
+  common:
+
+    batch_size: [8, 64]
+    n_epochs: [50,200]
+    dropout: [0.02, 0.5]
+    optimizer_kwargs:
+       lr: [0.0001,0.1]
+#    lr_scheduler_kwargs:
+#      max_lr: [0.1, 1.0]
+#      pct_start: [0.1, 0.5]
+  models:
+#    TiDEModel:
+#      num_encoder_layers: [1,2,3]
+#      num_decoder_layers: [1,2,3]
+#      decoder_output_dim: [4,8,16,32]
+#      hidden_size: [256,512,1024]
+#      temporal_width: [2,4,8,16]
+#      temporal_decoder_hidden: [32,64,128]
+#      use_layer_norm: [True, False]
+#      use_reversible_instance_norm: [True, False]
+    TFTModel:
+      num_attention_heads: [1, 8]
+      hidden_size: [32, 128]
+      hidden_continuous_size: [8, 32]
+      lstm_layers: [1, 3]
+      full_attention : [True, False]
+#    TransformerModel:
+#      d_model: [4, 16]
+#      nhead: [2, 8]
+#      num_encoder_layers: [2, 8]
+#      num_decoder_layers: [2, 8]
+#      dim_feedforward: [64, 256]
+#    NBEATSModel:
+#      num_blocks: [2, 6]
+#      num_stacks: [8, 32]
+#      num_layers: [1, 5]
+#      layer_widths: [32, 256]
+#

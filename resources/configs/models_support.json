@@ -1,0 +1,18 @@
+{
+    "attributes_to_discard": [
+        "volume",
+        "split coefficient"
+    ],
+    "supported_future_inputs": [
+        "day",
+        "month"
+    ],
+    "supported_metrics": [
+        "rmse",
+        "predicted_vs_naive",
+        "return",
+        "predicted_vs_naive_ma",
+        "f1_score",
+        "return_on_risk"
+    ]
+}

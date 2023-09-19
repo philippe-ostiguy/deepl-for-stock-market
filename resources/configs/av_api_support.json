@@ -1,0 +1,184 @@
+{
+    "COMMODITIES": {
+        "api_parameters": {
+            "apikey": "",
+            "function": "",
+            "interval": "daily"
+        },
+        "response_helpers": {
+            "input_key_name": [
+                "function"
+            ],
+            "nested_response": false,
+            "response": "data",
+            "returned_values": [
+                "date",
+                "value"
+            ]
+        },
+        "supported_symbols": [
+            "WTI",
+            "NATURAL_GAS"
+        ]
+    },
+    "DIGITAL_CURRENCY_DAILY": {
+        "api_parameters": {
+            "apikey": "",
+            "function": "DIGITAL_CURRENCY_DAILY",
+            "market": "USD",
+            "symbol": ""
+        },
+        "response_helpers": {
+            "input_key_name": [
+                "symbol"
+            ],
+            "nested_response": true,
+            "response": "Time Series (Digital Currency Daily)",
+            "returned_values": [
+                "date",
+                "1a. open (USD)",
+                "1b. open (USD)",
+                "2a. high (USD)",
+                "2b. high (USD)",
+                "3a. low (USD)",
+                "3b. low (USD)",
+                "4a. close (USD)",
+                "4b. close (USD)",
+                "5. volume",
+                "6. market cap (USD)"
+            ]
+        },
+        "supported_symbols": [
+            "BTC"
+        ]
+    },
+    "FX_DAILY": {
+        "api_parameters": {
+            "apikey": "",
+            "from_symbol": "",
+            "function": "FX_DAILY",
+            "outputsize": "full",
+            "to_symbol": "USD"
+        },
+        "response_helpers": {
+            "input_key_name": [
+                "from_symbol"
+            ],
+            "nested_response": true,
+            "response": "Time Series FX (Daily)",
+            "returned_values": [
+                "date",
+                "1. open",
+                "2. high",
+                "3. low",
+                "4. close"
+            ]
+        },
+        "supported_symbols": [
+            "EUR"
+        ]
+    },
+    "TIME_SERIES_DAILY_ADJUSTED": {
+        "api_parameters": {
+            "apikey": "",
+            "function": "TIME_SERIES_DAILY_ADJUSTED",
+            "outputsize": "full",
+            "symbol": ""
+        },
+        "response_helpers": {
+            "input_key_name": [
+                "symbol"
+            ],
+            "nested_response": true,
+            "response": "Time Series (Daily)",
+            "returned_values": [
+                "date",
+                "1. open",
+                "2. high",
+                "3. low",
+                "4. close",
+                "5. adjusted close",
+                "6. volume",
+                "7. dividend amount",
+                "8. split coefficient"
+            ]
+        },
+        "supported_symbols": [
+            "SPY",
+            "AAPL",
+            "MSFT",
+            "GOOGL",
+            "GOOG",
+            "AMZN",
+            "BRK.B",
+            "UNH",
+            "JNJ",
+            "XOM",
+            "V",
+            "TSLA",
+            "WMT",
+            "NVDA",
+            "PG",
+            "LLY",
+            "CVX",
+            "MA",
+            "HD",
+            "META",
+            "PFE",
+            "ABBV",
+            "MRK",
+            "KO",
+            "BAC",
+            "PEP",
+            "AVGO",
+            "ORCL",
+            "TMO",
+            "COST",
+            "CSCO",
+            "MCD",
+            "ABT",
+            "DHR",
+            "NKE",
+            "TMUS",
+            "ACN",
+            "NEE",
+            "VZ",
+            "DIS",
+            "WFC",
+            "LIN",
+            "PM",
+            "ADBE",
+            "SCHW",
+            "CMCSA",
+            "BMY",
+            "UPS",
+            "TXN",
+            "RTX"
+        ]
+    },
+    "TREASURY_YIELD": {
+        "api_parameters": {
+            "apikey": "",
+            "function": "TREASURY_YIELD",
+            "interval": "daily",
+            "maturity": ""
+        },
+        "response_helpers": {
+            "input_key_name": [
+                "maturity"
+            ],
+            "nested_response": false,
+            "response": "data",
+            "returned_values": [
+                "date",
+                "value"
+            ]
+        },
+        "supported_symbols": [
+            "2year",
+            "3month",
+            "10year",
+            "7year"
+        ]
+    }
+}
