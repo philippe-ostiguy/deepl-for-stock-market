@@ -2,7 +2,7 @@
 import pandas as pd
 import lightning.pytorch as pl
 from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
-from pytorch_forecasting import TimeSeriesDataSet, RecurrentNetwork
+from pytorch_forecasting import TimeSeriesDataSet, RecurrentNetwork, DeepAR
 from mean_reversion.utils import clear_directory_content, read_json
 import matplotlib.pyplot as plt
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
@@ -119,7 +119,7 @@ class Modeler:
         #         self._training_dataset.time_varying_known_reals + self._training_dataset.time_varying_unknown_reals)
         #     encoder_variables.discard('return')
         #     self._continuous_cols = encoder_variables
-
+        self._continuous_cols.append("return")
 
         self._training_dataset = TimeSeriesDataSet(
             self._train_data,
@@ -159,7 +159,7 @@ class Modeler:
 
         model_to_train = self._config_manager.get_custom_model(self._model_name)
 
-        self._model = RecurrentNetwork.from_dataset(
+        self._model = DeepAR.from_dataset(
             dataset=self._training_dataset,
             **self._config_manager.models_hyperparameters[self._model_name],
         )

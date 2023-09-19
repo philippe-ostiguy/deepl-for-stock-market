@@ -113,12 +113,12 @@ hyperparameters:
 #    NHiTS:
 #      hidden_size: 512
 #      loss: 'MASE'
-    RecurrentNetwork :
-      cell_type: 'LSTM'
-      hidden_size: 32
-      rnn_layers: 3
-      dropout: 0.1
-      loss: 'QuantileLoss'
+#    RecurrentNetwork :
+#      cell_type: 'LSTM'
+#      hidden_size: 32
+#      rnn_layers: 3
+#      dropout: 0.1
+#      loss: 'QuantileLoss'
     DeepAR:
       cell_type : 'LSTM'
       hidden_size: 32
