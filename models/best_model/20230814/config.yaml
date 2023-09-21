@@ -1,0 +1,147 @@
+common :
+  start_date : '2017-07-01'
+  end_date : '2023-06-15'
+  max_missing_data : .02
+  fetching : False
+  preprocessing : False
+  engineering : False
+  model_phase : 'train'
+  train_test_split : .85
+  correlation_threshold : 0.7
+  min_validation_forecasts : 95
+  hyperparameters_optimization :
+    is_optimizing : True
+    nb_trials : 50
+    is_config_optimizing : True
+
+
+  scaling: True
+  metrics_to_choose_model :
+    - 'return'
+    - 'predicted_vs_naive_ma'
+
+inputs:
+  past_covariates :
+  #  - source: 'reddit'
+  #    data:
+  #      - 'reddit'
+  #    size: 100
+    - source: 'av'
+      data:
+        - 'SPY'
+#        - 'set_dynamically_50_largest_stocks'
+        - 'NATURAL_GAS'
+        - '3month'
+        - '10year'
+        - '2year'
+        - 'EUR'
+        - 'WTI'
+    - source : 'fred'
+      data:
+#       - 'set_dynamically'
+        - 'T5YIE'
+        - 'T10YIE'
+        - 'DEXUSNZ'
+        - 'VIXCLS'
+    - source : 'macrotrends'
+      data :
+#        - 'set_dynamically'
+        - 'wheat'
+        - 'corn'
+  future_covariates :
+      data:
+        - 'day'
+        - 'month'
+
+output :
+  source : 'av'
+  data : 'SPY'
+  attributes :
+    - '4. close'
+    - '1. open'
+
+hyperparameters:
+  common:
+    num_layers: 2
+    layer_widths: 128
+    batch_size: 16
+    n_epochs: 100
+    nr_epochs_val_period: 1
+    dropout: 0.1
+    activation: "ReLU"
+    #num_loader_workers : 4
+    random_state: 42
+    optimizer_kwargs: {"lr": 0.0001}
+    lr_scheduler_cls: ""
+    lr_scheduler_kwargs:
+      max_lr: null
+      total_steps: null
+      pct_start: 0.1
+      anneal_strategy: "linear"
+      cycle_momentum: False
+    save_checkpoints: True
+    force_reset: True
+    likelihood: [0.05, 0.1, 0.2, 0.5, 0.8, 0.9, 0.95]
+    #loss_fn: ''
+    input_chunk_length: 32
+    output_chunk_length: 1
+    num_samples : 200
+    n_jobs : 3
+    callbacks :
+      EarlyStopping :
+        monitor : 'val_loss'
+        patience : 10
+        verbose : False
+        mode : 'min'
+    pl_trainer_kwargs :
+      callbacks:
+        - 'EarlyStopping'
+  models :
+    TFTModel:
+      num_attention_heads: 2
+      hidden_size: 64
+      hidden_continuous_size: 16
+      lstm_layers: 1
+      full_attention: True
+      d_model: 8
+      nhead: 2
+#    TransformerModel:
+#      d_model: 8
+#      nhead: 4
+#      num_encoder_layers: 4
+#      num_decoder_layers: 4
+#      dim_feedforward: 128
+#    NBEATSModel:
+#      num_blocks: 3
+#      num_stacks: 16
+
+hyperparameters_optimization:
+  common:
+    num_layers: [1, 5]
+    layer_widths: [32, 256]
+    batch_size: [8, 64]
+    n_epochs: [50,200]
+    dropout: [0.05, 0.5]
+    optimizer_kwargs:
+       lr: [0.0001,0.1]
+#    lr_scheduler_kwargs:
+#      max_lr: [0.1, 1.0]
+#      pct_start: [0.1, 0.5]
+  models:
+    TFTModel:
+      num_attention_heads: [1, 8]
+      hidden_size: [32, 128]
+      hidden_continuous_size: [8, 32]
+      lstm_layers: [1, 3]
+      d_model: [4, 16]
+      nhead: [2, 8]
+      full_attention : [True, False]
+#    TransformerModel:
+#      d_model: [4, 16]
+#      nhead: [2, 8]
+#      num_encoder_layers: [2, 8]
+#      num_decoder_layers: [2, 8]
+#      dim_feedforward: [64, 256]
+#    NBEATSModel:
+#      num_blocks: [2, 6]
+#      num_stacks: [8, 32]

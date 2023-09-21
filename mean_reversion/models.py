@@ -39,7 +39,7 @@ class Modeler:
             self._obtain_dataloader()
             source_dir = f'models/{self._model_name}'
             clear_directory_content(source_dir)
-            os.makedirs(f'{source_dir}/{self._model_name}')
+            os.makedirs(f'{source_dir}')
             self._train_model()
             self._coordinate_predict()
 

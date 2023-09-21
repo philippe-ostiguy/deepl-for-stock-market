@@ -1,0 +1,20 @@
+{
+    "evaluation": {
+        "actual_return": 0.1631617546081543,
+        "f1_score": 0.375251193463781,
+        "predicted_vs_naive": 0.6951098442077637,
+        "predicted_vs_naive_ma": 0.95705246925354,
+        "return": 0.22217106819152832,
+        "return_on_risk": 0,
+        "rmse": 0.010389557108283043
+    },
+    "test": {
+        "actual_return": 0,
+        "f1_score": 0,
+        "predicted_vs_naive": 0,
+        "predicted_vs_naive_ma": 0,
+        "return": -0.2,
+        "return_on_risk": 0,
+        "rmse": 0
+    }
+}
