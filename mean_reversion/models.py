@@ -2,7 +2,9 @@
 import pandas as pd
 import lightning.pytorch as pl
 from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
-from pytorch_forecasting import TimeSeriesDataSet, RecurrentNetwork, DeepAR
+from pytorch_forecasting import TimeSeriesDataSet, \
+    RecurrentNetwork, DeepAR, TemporalFusionTransformer, NHiTS
+
 from mean_reversion.utils import clear_directory_content, read_json
 import matplotlib.pyplot as plt
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
@@ -13,6 +15,8 @@ from sklearn.metrics import mean_squared_error, f1_score
 import threading
 from mean_reversion.config.model_config import  CUSTOM_MODEL
 from mean_reversion.config.config_utils import ConfigManager
+from pytorch_forecasting.metrics import MAE, SMAPE, \
+    MultivariateNormalDistributionLoss
 
 class Modeler:
     def __init__(
@@ -27,7 +31,6 @@ class Modeler:
 
     def run(self):
         self._obtain_data()
-        #clear_directory_content('models/tempo')
         for model in self._config["hyperparameters"]["models"]:
             if model not in CUSTOM_MODEL:
                 raise ValueError(f"Invalid model: {model}")
@@ -99,27 +102,11 @@ class Modeler:
         self._test_data['group'] = 'group_1'
 
         self._continuous_cols = [col for col in self._input_past_train.columns if col not in ["time"]]
-        if ("RecurrentNetwork" or "DeepAR") not in self._model_name:
-            self._continuous_cols.append("return")
-            encoder_variables = []
-
-        # else :
-        #     self._training_dataset = TimeSeriesDataSet(
-        #         self._train_data,
-        #         time_idx="time",
-        #         target="return",
-        #         group_ids=["group"],
-        #         max_encoder_length=self._params["max_encoder_length"],
-        #         max_prediction_length=self._params["max_prediction_length"],
-        #         time_varying_known_categoricals=self._categorical_cols,
-        #         time_varying_unknown_reals=self._continuous_cols,
-        #     )
-        #
-        #     encoder_variables = set(
-        #         self._training_dataset.time_varying_known_reals + self._training_dataset.time_varying_unknown_reals)
-        #     encoder_variables.discard('return')
-        #     self._continuous_cols = encoder_variables
         self._continuous_cols.append("return")
+        if "RecurrentNetwork" in self._model_name or 'DeepAR' in self._model_name:
+            self._continuous_cols = ["return"]
+        if "NHiTS" in self._model_name :
+            self._categorical_cols = []
 
         self._training_dataset = TimeSeriesDataSet(
             self._train_data,
@@ -128,25 +115,9 @@ class Modeler:
             group_ids=["group"],
             max_encoder_length=self._params["max_encoder_length"],
             max_prediction_length=self._params["max_prediction_length"],
-            #time_varying_known_categoricals=self._categorical_cols,
+            time_varying_known_categoricals=self._categorical_cols,
             time_varying_unknown_reals=self._continuous_cols,
-            #time_varying_known_reals=encoder_variables,
         )
-
-        print("Time Varying Known Reals:",
-              self._training_dataset.time_varying_known_reals)
-        print("Time Varying Unknown Reals:",
-              self._training_dataset.time_varying_unknown_reals)
-
-        encoder_variables = set(
-            self._training_dataset.time_varying_known_reals + self._training_dataset.time_varying_unknown_reals)
-        #encoder_variables.discard('return')
-
-        decoder_variables = set(
-            self._training_dataset.time_varying_known_reals + self._training_dataset.time_varying_unknown_reals)
-
-        assert encoder_variables == decoder_variables, "Mismatch between encoder and decoder variables"
-
 
         self._train_dataloader = self._training_dataset.to_dataloader(train=True, batch_size=self._params['batch_size'], num_workers=0)
         self._val_dataset = TimeSeriesDataSet.from_dataset(self._training_dataset, self._val_data, predict=False, stop_randomization=True)
@@ -156,13 +127,13 @@ class Modeler:
 
     def _train_model(self):
         pl.seed_everything(self._params['random_state'])
-
         model_to_train = self._config_manager.get_custom_model(self._model_name)
 
-        self._model = DeepAR.from_dataset(
+        self._model = model_to_train.from_dataset(
             dataset=self._training_dataset,
             **self._config_manager.models_hyperparameters[self._model_name],
         )
+
         logger = TensorBoardLogger("lightning_logs")
 
         callbacks_list = []

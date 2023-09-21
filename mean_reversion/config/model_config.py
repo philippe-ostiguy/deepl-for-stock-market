@@ -4,7 +4,7 @@ from torch.optim.lr_scheduler import (
     ExponentialLR,
     ReduceLROnPlateau,
 )
-from pytorch_forecasting.metrics import RMSE,QuantileLoss, MASE, NormalDistributionLoss
+from pytorch_forecasting.metrics import RMSE, QuantileLoss, MASE, NormalDistributionLoss, SMAPE
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
 from mean_reversion.config.model_customizer import (
     PortfolioReturnMetric,
@@ -49,6 +49,7 @@ LOSS = {
     'RMSE' : RMSE,
     'QuantileLoss': QuantileLoss,
     'MASE' : MASE,
-    'NormalDistributionLoss' : NormalDistributionLoss
+    'NormalDistributionLoss' : NormalDistributionLoss,
+    'SMAPE' : SMAPE,
 
 }

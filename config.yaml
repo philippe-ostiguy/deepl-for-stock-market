@@ -67,8 +67,7 @@ output :
 hyperparameters:
   common:
     batch_size: 16
-#    epochs: 300
-    epochs : 1
+    epochs: 300
     #num_loader_workers : 4
     random_state: 42
     #gradient_clip_val : 1
@@ -100,25 +99,29 @@ hyperparameters:
         - 'EarlyStopping'
         - 'ModelCheckPoint'
   models :
-#    TemporalFusionTransformer:
-#      loss: 'QuantileLoss'
-#      learning_rate: 0.001
-#      hidden_size: 128
-#      lstm_layers : 2
-#      attention_head_size: 8
-#      dropout: 0.1
-#      hidden_continuous_size: 32
-#      #reduce_on_plateau_patience: 5
-#      outputsize : 7
-#    NHiTS:
-#      hidden_size: 512
-#      loss: 'MASE'
-#    RecurrentNetwork :
-#      cell_type: 'LSTM'
-#      hidden_size: 32
-#      rnn_layers: 3
-#      dropout: 0.1
-#      loss: 'QuantileLoss'
+    TemporalFusionTransformer:
+      loss: 'QuantileLoss'
+      learning_rate: 0.001
+      hidden_size: 128
+      lstm_layers : 2
+      attention_head_size: 8
+      dropout: 0.1
+      hidden_continuous_size: 32
+      #reduce_on_plateau_patience: 5
+      outputsize : 7
+    NHiTS:
+      hidden_size: 512
+      loss: 'QuantileLoss'
+      downsample_frequencies : [1,1,1]
+      pooling_sizes : [1,1,1]
+      learning_rate : 0.001
+      backcast_loss_ratio : 0.0
+    RecurrentNetwork :
+      cell_type: 'LSTM'
+      hidden_size: 32
+      rnn_layers: 3
+      dropout: 0.1
+      loss: 'RMSE'
     DeepAR:
       cell_type : 'LSTM'
       hidden_size: 32
