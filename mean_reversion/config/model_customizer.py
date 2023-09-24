@@ -4,7 +4,7 @@ from pytorch_forecasting import TemporalFusionTransformer, DeepAR, NHiTS, Recurr
 from statistics import median
 
 class PortfolioReturnMetric(Metric):
-    def __init__(self, dist_sync_on_step=False):
+    def __init__(self, dist_sync_on_step=True):
         super().__init__(dist_sync_on_step=dist_sync_on_step)
         self.add_state("portfolio_value", default=torch.tensor(0.0), dist_reduce_fx="sum")
 
@@ -27,7 +27,8 @@ class PortfolioReturnMetric(Metric):
                 portfolio_value *= (1 + actual)
             else:
                 portfolio_value *= (1 - actual)
-        self.portfolio_value = (self.portfolio_value +1)*portfolio_value
+        self.portfolio_value = torch.tensor(self.portfolio_value.item() + 1) * portfolio_value
+
 
         self.portfolio_value-=1
     def compute(self):

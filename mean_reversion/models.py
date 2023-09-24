@@ -5,6 +5,8 @@ from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
 from pytorch_forecasting import TimeSeriesDataSet, \
     RecurrentNetwork, DeepAR, TemporalFusionTransformer, NHiTS
 
+import re
+from typing import Callable
 from mean_reversion.utils import clear_directory_content, read_json
 import matplotlib.pyplot as plt
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
@@ -17,6 +19,8 @@ from mean_reversion.config.model_config import  CUSTOM_MODEL
 from mean_reversion.config.config_utils import ConfigManager
 from pytorch_forecasting.metrics import MAE, SMAPE, \
     MultivariateNormalDistributionLoss
+from pytorch_forecasting.data import GroupNormalizer
+
 
 class Modeler:
     def __init__(
@@ -39,8 +43,10 @@ class Modeler:
             self._obtain_dataloader()
             source_dir = f'models/{self._model_name}'
             clear_directory_content(source_dir)
-            os.makedirs(f'{source_dir}')
+            os.makedirs(f'{source_dir}', exist_ok=True)
             self._train_model()
+            self._obtain_best_model()
+            self._coordinate_interpretions()
             self._coordinate_predict()
 
 
@@ -58,6 +64,73 @@ class Modeler:
                 self._params[item] = self._config["hyperparameters"]["common"][item]
             else :
                 self._params[item] = None
+
+    def _coordinate_interpretions(self):
+        if "TemporalFusionTransformer" in self._model_name:
+            self._interpret_features_importance()
+        self._interpret_features_sensitivity()
+
+
+    def _interpret_features_sensitivity(self):
+
+        raw_predictions = self._best_model.predict(self._val_dataloader,
+                                           return_x=True)
+        predictions_vs_actuals = self._best_model.calculate_prediction_actual_by_variable(
+            raw_predictions.x, raw_predictions.output)
+        features_sensitivity_path = f'models/{self._model_name}/features_sensitivity'
+        os.makedirs(features_sensitivity_path, exist_ok=True)
+        self._save_multiple_interprations_plot(predictions_vs_actuals,
+                                               features_sensitivity_path,
+                                               self._best_model.plot_prediction_actual_by_variable)
+
+
+
+    def _interpret_features_importance(self):
+        raw_predictions = self._best_model.predict(self._val_dataloader,
+                                                   mode="raw",
+                                                   return_x=True)
+
+        interpretations = self._best_model.interpret_output(
+            raw_predictions.output,
+            reduction="sum"
+        )
+
+        features_importance_dir = f'models/{self._model_name}/features_importance'
+        os.makedirs(features_importance_dir, exist_ok=True)
+        self._save_multiple_interprations_plot(interpretations,
+                                               features_importance_dir,
+                                               self._best_model.plot_interpretation)
+
+    def _save_multiple_interprations_plot(self, interpretations,
+                                          directory_to_save,
+                                          plot_function: Callable) -> None:
+        original_backend = plt.get_backend()
+        plt.switch_backend("Agg")
+        plot_function(interpretations)
+        for i, fig_num in enumerate(plt.get_fignums()):
+            fig = plt.figure(fig_num)
+
+            for j, ax in enumerate(
+                    fig.get_axes()):
+                title = ax.get_title()
+                interpretation_file_path = os.path.join(directory_to_save,
+                                                        f'{title}.png')
+
+
+                fig.savefig(
+                    interpretation_file_path)
+                break
+
+            plt.close(fig)  # Close the figure to free up memory
+
+        plt.switch_backend(original_backend)
+
+
+    def _obtain_best_model(self):
+        best_model_path = self._model_checkpoint.best_model_path
+        self._best_model = self._model.load_from_checkpoint(best_model_path)
+        #self._best_model = self._model.load_from_checkpoint('tempo/best_model.ckpt')
+
 
     def _obtain_data(self):
         if self._config["inputs"]["future_covariates"]['data']:
@@ -91,7 +164,6 @@ class Modeler:
 
 
 
-
     def _obtain_dataloader(self):
         self._train_data = pd.concat([self._input_past_train, self._input_future_train.drop(columns=['time']), self._output_train[['return']]], axis=1)
         self._val_data = pd.concat([self._input_past_predict, self._input_future_predict.drop(columns=['time']), self._output_predict[['return']]], axis=1)
@@ -103,27 +175,43 @@ class Modeler:
 
         self._continuous_cols = [col for col in self._input_past_train.columns if col not in ["time"]]
         self._continuous_cols.append("return")
+        add_encoder_length = True
+        add_relative_time_idx = True
+        add_target_scales = True
+        static_categoricals = ["group"]
+
         if "RecurrentNetwork" in self._model_name or 'DeepAR' in self._model_name:
             self._continuous_cols = ["return"]
         if "NHiTS" in self._model_name :
             self._categorical_cols = []
+            add_relative_time_idx = False
+            add_encoder_length = False
+            add_target_scales = False
+            static_categoricals = []
 
         self._training_dataset = TimeSeriesDataSet(
             self._train_data,
             time_idx="time",
             target="return",
             group_ids=["group"],
+            static_categoricals=static_categoricals,
             max_encoder_length=self._params["max_encoder_length"],
             max_prediction_length=self._params["max_prediction_length"],
             time_varying_known_categoricals=self._categorical_cols,
             time_varying_unknown_reals=self._continuous_cols,
+            add_encoder_length=add_encoder_length,
+            add_relative_time_idx= add_relative_time_idx,
+            add_target_scales= add_target_scales,
+            target_normalizer=GroupNormalizer(
+                groups=["group"]
+            ),
         )
 
         self._train_dataloader = self._training_dataset.to_dataloader(train=True, batch_size=self._params['batch_size'], num_workers=0)
         self._val_dataset = TimeSeriesDataSet.from_dataset(self._training_dataset, self._val_data, predict=False, stop_randomization=True)
-        self._val_dataloader = self._val_dataset.to_dataloader(train=False, batch_size=self._params['batch_size']*1000, num_workers=0)
+        self._val_dataloader = self._val_dataset.to_dataloader(train=False, batch_size=self._params['batch_size']*100, num_workers=0)
         self._test_dataset = TimeSeriesDataSet.from_dataset(self._training_dataset, self._test_data, predict=False, stop_randomization=True)
-        self._test_dataloader = self._test_dataset.to_dataloader(train=False, batch_size=self._params['batch_size']*1000, num_workers=0)
+        self._test_dataloader = self._test_dataset.to_dataloader(train=False, batch_size=self._params['batch_size']*100, num_workers=0)
 
     def _train_model(self):
         pl.seed_everything(self._params['random_state'])
@@ -172,7 +260,7 @@ class Modeler:
         self._cumulative_index = len(data) - len(
             dataloader.dataset)
 
-        predictions = self._best_model.predict(dataloader, mode ="raw",  return_x=True,return_y = True)
+        predictions = self._best_model.predict(dataloader, mode ="raw", return_x=True, return_y = True)
         if len(predictions.output.prediction.shape) != 1:
             pass
 
@@ -194,7 +282,7 @@ class Modeler:
             self._cumulative_index += 1
             self._all_predicted_returns.append(predicted_return)
             self._all_actual_returns.append(actual_return)
-        self._all_predicted_returns = [t.item() for t in self._all_predicted_returns]
+        self._all_predicted_returns = [prediction.item() for prediction in self._all_predicted_returns]
 
     def _process_metrics(self,forecast_data):
         predicted_return_class = [1 if ret >= 0 else 0 for ret in
@@ -251,9 +339,6 @@ class Modeler:
 
 
     def _coordinate_predict(self):
-        best_model_path = self._model_checkpoint.best_model_path
-        self._best_model = self._model.load_from_checkpoint(best_model_path)
-        #self._best_model = self._model.load_from_checkpoint('models/pytorch_forecasting_local/TemporalFusionTransformer/best_model-TemporalFusionTransformer-epoch=00-val_loss=0.00.ckpt')
 
         for dataloader, data, data_type in [(self._val_dataloader, self._val_data, 'val'), (self._test_dataloader, self._test_data, 'test')]:
             if dataloader is None or data is None:

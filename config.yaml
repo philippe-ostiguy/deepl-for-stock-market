@@ -67,10 +67,10 @@ output :
 hyperparameters:
   common:
     batch_size: 16
-    epochs: 300
+    epochs: 1
     #num_loader_workers : 4
     random_state: 42
-    #gradient_clip_val : 1
+    gradient_clip_val : 1
 #    optimizer_kwargs: {"lr": 0.001}
 #    lr_scheduler_cls: ""
 #    lr_scheduler_kwargs:
@@ -85,7 +85,7 @@ hyperparameters:
     callbacks :
       EarlyStopping :
         monitor : 'val_PortfolioReturnMetric'
-        patience : 40
+        patience : 50
         verbose : False
         mode : 'max'
       ModelCheckPoint :
@@ -102,8 +102,8 @@ hyperparameters:
     TemporalFusionTransformer:
       loss: 'QuantileLoss'
       learning_rate: 0.001
-      hidden_size: 128
-      lstm_layers : 2
+      hidden_size: 256
+      lstm_layers : 3
       attention_head_size: 8
       dropout: 0.1
       hidden_continuous_size: 32
@@ -116,24 +116,24 @@ hyperparameters:
       pooling_sizes : [1,1,1]
       learning_rate : 0.001
       backcast_loss_ratio : 0.0
-    RecurrentNetwork :
-      cell_type: 'LSTM'
-      hidden_size: 32
-      rnn_layers: 3
-      dropout: 0.1
-      loss: 'RMSE'
-    DeepAR:
-      cell_type : 'LSTM'
-      hidden_size: 32
-      rnn_layers: 3
-      dropout : .1
-      loss : 'NormalDistributionLoss'
+#    RecurrentNetwork :
+#      cell_type: 'LSTM'
+#      hidden_size: 32
+#      rnn_layers: 3
+#      dropout: 0.1
+#      loss: 'RMSE'
+#    DeepAR:
+#      cell_type : 'LSTM'
+#      hidden_size: 32
+#      rnn_layers: 3
+#      dropout : .1
+#      loss : 'NormalDistributionLoss'
 
 hyperparameters_optimization:
   common:
 
     batch_size: [8, 64]
-    n_epochs: [50,200]
+    n_epochs: [100,500]
     dropout: [0.02, 0.5]
     optimizer_kwargs:
        lr: [0.0001,0.1]
@@ -150,12 +150,12 @@ hyperparameters_optimization:
 #      temporal_decoder_hidden: [32,64,128]
 #      use_layer_norm: [True, False]
 #      use_reversible_instance_norm: [True, False]
-    TFTModel:
-      num_attention_heads: [1, 8]
-      hidden_size: [32, 128]
-      hidden_continuous_size: [8, 32]
-      lstm_layers: [1, 3]
-      full_attention : [True, False]
+#    TFTModel:
+#      num_attention_heads: [1, 8]
+#      hidden_size: [32, 128]
+#      hidden_continuous_size: [8, 32]
+#      lstm_layers: [1, 3]
+#      full_attention : [True, False]
 #    TransformerModel:
 #      d_model: [4, 16]
 #      nhead: [2, 8]
