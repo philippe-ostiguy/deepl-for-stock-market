@@ -4,12 +4,15 @@ from pytorch_forecasting import TemporalFusionTransformer, DeepAR, NHiTS, Recurr
 from statistics import median
 
 class PortfolioReturnMetric(Metric):
+    is_differentiable = False
+    higher_is_better = True
+    full_state_update = True
     def __init__(self, dist_sync_on_step=True):
         super().__init__(dist_sync_on_step=dist_sync_on_step)
         self.add_state("portfolio_value", default=torch.tensor(0.0), dist_reduce_fx="sum")
 
     def update(self, preds: torch.Tensor, target_tensor: tuple):
-        values = preds['prediction'].numpy().squeeze()
+        values = preds['prediction'].detach().cpu().numpy().squeeze()
 
         preds = values.tolist()
         if all(isinstance(lst, list) for lst in preds):
@@ -27,10 +30,9 @@ class PortfolioReturnMetric(Metric):
                 portfolio_value *= (1 + actual)
             else:
                 portfolio_value *= (1 - actual)
-        self.portfolio_value = torch.tensor(self.portfolio_value.item() + 1) * portfolio_value
+        self.portfolio_value += portfolio_value-1
 
 
-        self.portfolio_value-=1
     def compute(self):
         return self.portfolio_value
 
