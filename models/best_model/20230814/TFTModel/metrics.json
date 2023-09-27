@@ -1,5 +1,5 @@
 {
-    "evaluation": {
+    "predict": {
         "actual_return": 0.1631617546081543,
         "f1_score": 0.375251193463781,
         "predicted_vs_naive": 0.6951098442077637,

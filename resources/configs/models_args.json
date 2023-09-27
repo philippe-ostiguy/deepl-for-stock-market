@@ -243,6 +243,9 @@
         "batch_size": {
             "trial_suggest": "suggest_int"
         },
+        "confidence_level" : {
+            "trial_suggest": "suggest_float"
+        },
         "epochs": {
             "trial_suggest": "suggest_int"
         },

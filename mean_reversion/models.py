@@ -4,9 +4,11 @@ import pandas as pd
 import lightning.pytorch as pl
 from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
 from tensorboard.backend.event_processing import event_accumulator
-
 from pytorch_forecasting import TimeSeriesDataSet, \
     RecurrentNetwork, DeepAR, TemporalFusionTransformer, NHiTS
+from pytorch_forecasting.metrics import MAE, SMAPE, \
+    MultivariateNormalDistributionLoss
+from pytorch_forecasting.data import GroupNormalizer
 from typing import Callable
 from mean_reversion.utils import clear_directory_content, read_json
 import matplotlib.pyplot as plt
@@ -16,12 +18,19 @@ import json
 import numpy as np
 from sklearn.metrics import mean_squared_error, f1_score
 import threading
-from mean_reversion.config.model_config import  CUSTOM_MODEL
+from mean_reversion.config.model_customizer import CustomNHiTS,CustomDeepAR,CustomTemporalFusionTransformer,CustomlRecurrentNetwork
 from mean_reversion.config.config_utils import ConfigManager
+from mean_reversion.config.constants import PICKLE
+import datetime
 
-from pytorch_forecasting.metrics import MAE, SMAPE, \
-    MultivariateNormalDistributionLoss
-from pytorch_forecasting.data import GroupNormalizer
+
+CUSTOM_MODEL = {
+    "NHiTS": CustomNHiTS,
+    "DeepAR": CustomDeepAR,
+    "TemporalFusionTransformer": CustomTemporalFusionTransformer,
+    "RecurrentNetwork": CustomlRecurrentNetwork
+}
+
 
 
 class Modeler:
@@ -36,22 +45,22 @@ class Modeler:
 
         self._datasets = ['train', 'predict', 'test']
         self._lightning_logs_dir = 'lightning_logs'
+        self._lower_index, self._upper_index = self._config_manager.get_confidence_indexes()
 
     def run(self):
         self._obtain_data()
         for model in self._config["hyperparameters"]["models"]:
-            if model not in CUSTOM_MODEL:
-                raise ValueError(f"Invalid model: {model}")
-
             self._model_name = model
             self._obtain_dataloader()
             self._model_dir = f'models/{self._model_name}'
             self._clean_directory()
             self._train_model()
             self._obtain_best_model()
-            self._coordinate_predict()
+            self._coordinate_evaluation()
             self._coordinate_interpretions()
             self._save_metrics_from_tensorboardflow()
+            # if self._is_new_model_better:
+            #     self._save_best_model(model)
 
         music_thread = threading.Thread(
             target=os.system('afplay super-mario-bros.mp3'))
@@ -133,7 +142,6 @@ class Modeler:
             add_encoder_length = False
             add_target_scales = False
             static_categoricals = []
-
         self._training_dataset = TimeSeriesDataSet(
             self._train_data,
             time_idx="time",
@@ -161,7 +169,7 @@ class Modeler:
 
     def _train_model(self):
         pl.seed_everything(self._params['random_state'])
-        model_to_train = self._config_manager.get_custom_model(self._model_name)
+        model_to_train = CUSTOM_MODEL[self._model_name]
 
         self._model = model_to_train.from_dataset(
             dataset=self._training_dataset,
@@ -219,6 +227,75 @@ class Modeler:
                                                features_sensitivity_path,
                                                self._best_model.plot_prediction_actual_by_variable)
 
+    def _select_best_model(self) -> None:
+        best_model_metrics_file = self._obtain_best_metrics_path()
+        if best_model_metrics_file:
+            self._best_metrics[self._current_dataset]= read_json(best_model_metrics_file)[self._current_dataset]
+            self._current_metrics[self._current_dataset] = self._filter_relevant_metrics()
+            if self._is_new_model_better:
+                is_model_better_func = getattr(self, f"_is_model_better_{self._current_dataset}")
+                self._is_new_model_better = is_model_better_func()
+        else:
+            self._save_best_model(self._model_name)
+
+    def _obtain_best_metrics_path(self):
+        most_recent_directory = self._obtain_most_recent_directory()
+        if most_recent_directory:
+            for root, _, files in os.walk(most_recent_directory):
+                if "metrics.json" in files:
+                    return os.path.join(root, "metrics.json")
+
+        return None
+
+
+    def _save_best_model(self) -> None:
+        model_dir = os.path.join('models', self._model_name)
+        best_model_dir = os.path.join(
+            self._config["common"]["best_model_path"], datetime.datetime.now().strftime("%Y%m%d"), self._model_name )
+        best_root_dir = os.path.join(
+            self._config["common"]["best_model_path"], datetime.datetime.now().strftime("%Y%m%d")
+        )
+        shutil.copytree(model_dir, best_model_dir)
+
+        shutil.copy("config.yaml", best_root_dir)
+        pickle_dir = os.path.join(best_root_dir, PICKLE)
+        os.makedirs(pickle_dir, exist_ok=True)
+        for file in self._config["inputs"]["past_covariates"]["common"][
+            "pickle"
+        ].values():
+            shutil.copy(file, pickle_dir)
+
+
+    def _is_model_better_evaluation(
+        self) -> bool:
+        for metric in self._current_metrics[self._current_dataset]:
+            better_func = getattr(self, f"_is_{metric}_performance_better")
+            if not better_func(self._current_metrics[self._current_dataset][metric], self._best_metrics[self._current_dataset][metric]):
+                return False
+        return True
+
+    def _is_model_better_test(self) -> bool:
+        if 'return_on_risk' in self._current_metrics[self._current_dataset]:
+            if self._current_metrics['test']['return_on_risk'] < (.5 * self._current_metrics['evaluation']['return_on_risk']):
+                return False
+        return True
+
+    def _is_return_performance_better(
+        self, current: float, best: float
+    ) -> bool:
+        return current > best
+
+    def _is_return_on_risk_performance_better(self, current: float, best: float) -> bool:
+        return current > best
+
+
+    def _filter_relevant_metrics(self) :
+        metrics_to_choose_model = self._config["common"][
+            "metrics_to_choose_model"
+        ]
+        return {
+            metric: self._metrics[metric] for metric in metrics_to_choose_model
+        }
 
     def _interpret_features_importance(self):
         raw_predictions = self._best_model.predict(self._predict_dataloader,
@@ -277,13 +354,20 @@ class Modeler:
 
         for i in range(predictions.output.prediction.shape[0]):
             current_prediction = predictions.output.prediction[i]
-
-            predicted_return = current_prediction.median(dim=1).values
+            median_pred_return = current_prediction.median(dim=1).values
+            lower_return = current_prediction[0,self._lower_index]
+            upper_return = current_prediction[0,self._upper_index]
 
             actual_return = predictions.y[0][i].item()
-            self._cumulative_predicted_return *= (
-                        1 + actual_return) if predicted_return >= 0 else (
-                        1 - actual_return)
+
+            if lower_return >= 0:
+                self._cumulative_predicted_return *= (
+                        1 + actual_return)
+            elif upper_return < 0:
+                self._cumulative_predicted_return *= (1 - actual_return)
+            else:
+               pass
+
             self._cumulative_actual_return *= (1 + actual_return)
             self._cumulative_max_possible *= (
                         1 + actual_return) if actual_return >= 0 else (
@@ -291,9 +375,10 @@ class Modeler:
 
             self._time_indices.append(data["time"].iloc[self._cumulative_index])
             self._cumulative_index += 1
-            self._all_predicted_returns.append(predicted_return)
+            self._all_predicted_returns.append(median_pred_return)
             self._all_actual_returns.append(actual_return)
         self._all_predicted_returns = [prediction.item() for prediction in self._all_predicted_returns]
+
 
     def _process_metrics(self,forecast_data):
         predicted_return_class = [1 if ret >= 0 else 0 for ret in
@@ -349,7 +434,7 @@ class Modeler:
                                  f'actuals_vs_predictions_{data_type}.png'))
 
 
-    def _coordinate_predict(self):
+    def _coordinate_evaluation(self):
 
         for dataloader, data, data_type in [(self._predict_dataloader, self._predict_data, 'predict'), (self._test_dataloader, self._test_data, 'test')]:
             if dataloader is None or data is None:

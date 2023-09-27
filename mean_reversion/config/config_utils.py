@@ -12,10 +12,7 @@ from mean_reversion.config.constants import (
 
 from mean_reversion.config.model_config import (
     PYTORCH_CALLBACKS,
-    LOSS,
-    MODEL_MAPPING,
-    CUSTOM_MODEL
-
+    LOSS
 )
 
 
@@ -77,8 +74,6 @@ class ConfigManager:
         with open(file_path, "r") as file:
             return [line.strip() for line in file]
 
-    def get_custom_model(self, model :str):
-        return CUSTOM_MODEL[model]
 
     def get_loss(self, model : str) -> Union[dict,None]:
         if self._check_if_argument_exist(model,'loss'):
@@ -251,6 +246,11 @@ class ConfigManager:
 
             else:
                 model_args['loss'] = LOSS[model_args['loss']]()
+
+            if "confidence_level" in common_config and common_config['confidence_level'] not in likelihood:
+                raise ValueError(f'Confidence level {common_config["confidence_level"]} must be a value '
+                                 f'in likelihood {likelihood}')
+
         elif "loss" in model_args:
             model_args['loss'] = LOSS[model_args['loss']]()
 
@@ -376,6 +376,18 @@ class ConfigManager:
     @property
     def config(self) -> dict:
         return self._config
+
+    def get_confidence_indexes(self):
+        confidence_level = \
+            self._config["hyperparameters"]["common"][
+                "confidence_level"] if "confidence_level" in \
+                                       self._config["hyperparameters"][
+                                           "common"] else .5
+        likelihood = self._config["hyperparameters"]["common"][
+            "likelihood"]
+        upper_index = likelihood.index(confidence_level)
+        lower_index = len(likelihood) -1 - upper_index
+        return lower_index,upper_index
 
     def get_config_for_source(self, source: str, is_input: bool) -> dict:
         if is_input:

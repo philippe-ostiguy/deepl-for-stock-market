@@ -49,6 +49,9 @@ import logging
 from contextlib import suppress
 import shutil
 from darts import TimeSeries
+import matplotlib.pyplot as plt
+import scipy.stats as stats
+
 
 logging.basicConfig(
     level=logging.WARNING,
@@ -108,7 +111,7 @@ class DataProcessorHelper:
     def data_to_write_ts(self, value: pd.DataFrame) -> None:
         self._data_to_write_ts = value
 
-    def remove_data_for_stationarity(
+    def remove_first_transformed_data(
         self, data_to_process: pd.DataFrame
     ) -> pd.DataFrame:
         return data_to_process.iloc[ENGINEERED_DATA_TO_REMOVE:]
@@ -422,9 +425,10 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
             Tuple[str, Callable[[pd.Series], pd.Series]]
         ] = [
             ("identity", self._apply_identity),
+            ("ratio", self._apply_ratio),
             ("first_difference", self._apply_first_difference),
             ("logarithmic", self._apply_logarithmic),
-            ("ratio", self._apply_ratio),
+
         ]
 
         self._stationarity_applied = {}
@@ -507,38 +511,71 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
         return adf_result[1]
 
     def coordinate_stationarity(self, data: pd.Series) -> Optional[str]:
-        p_values = []
+        valid_transformations = []
 
         for name, transform_function in self._transformations:
             transformed_data = transform_function(data)
-            if (
-                transformed_data is None
-                or (transformed_data.isna() | np.isinf(transformed_data)).any()
-            ):
+            if transformed_data is None or (
+                    transformed_data.isna() | np.isinf(transformed_data)).any():
                 return None
 
             if len(set(transformed_data)) == 1:
                 return None
 
             p_value = self._obtain_adf_p_value(transformed_data)
-            p_values.append((name, p_value))
+            if p_value < 0.05:
+                skewness = stats.skew(transformed_data)
+                kurtosis = stats.kurtosis(transformed_data)
+                if -2 <= skewness <= 7 and -2 <= kurtosis <= 7:
+                    valid_transformations.append(
+                        (name, p_value, skewness, kurtosis))
+        #self.TEMPO_FCT_MAKE_PLOT(data)
+        if not valid_transformations:
+            logging.warning(
+                f"Asset {self._asset_name} and column '{self._current_column}' "
+                f"could not be made stationary with the given transformations."
+            )
+            return None
 
-        identity_p_value = dict(p_values).get("identity")
+        for transformation in valid_transformations:
+            if transformation[0] == "identity":
+                return "identity"
+        final_transformation = min(valid_transformations, key=lambda x: (x[3], x[2]))[0]
+        return final_transformation
 
-        best_transformation, min_p_value = (
-            ("identity", identity_p_value)
-            if identity_p_value < 0.001
-            else min(p_values, key=lambda x: x[1])
-        )
+    def TEMPO_FCT_MAKE_PLOT(self,data):
+        log_data = self._make_logarithmic(data)
+        first_diff = self._make_first_difference(data)
+        ratio_data = self._make_ratio(data)
 
-        if min_p_value < 0.001:
-            return best_transformation
+        plt.figure(figsize=(12, 8))
+        plt.subplot(2, 2, 1)
+        plt.plot(data)
+        plt.title('Original Series')
+        plt.xlabel('Index')
+        plt.ylabel('Value')
 
-        logging.warning(
-            f"Asset {self._asset_name} and column '{self._current_column}' "
-            f"could not be made stationary with the given transformations."
-        )
-        return None
+        plt.subplot(2, 2, 2)
+        plt.plot(log_data)
+        plt.title('Logarithm of Series')
+        plt.xlabel('Index')
+        plt.ylabel('Log(Value)')
+
+        plt.subplot(2, 2, 3)
+        plt.plot(first_diff)
+        plt.title('First Difference of Series')
+        plt.xlabel('Index')
+        plt.ylabel('First Difference')
+
+        plt.subplot(2, 2, 4)
+        plt.plot(ratio_data)
+        plt.title('Ratio of Series')
+        plt.xlabel('Index')
+        plt.ylabel('Ratio')
+
+        plt.tight_layout()
+        plt.show(block=False)
+        plt.close()
 
     def run_feature_engineering(self):
         self._engineered_data = read_csv_to_pd_formatted(
@@ -554,7 +591,7 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
         self._coordinate_engineering_methods()
         self._dispatch_feature_engineering("data_stationary")
         self._engineered_data = (
-            self._data_processor_helper.remove_data_for_stationarity(
+            self._data_processor_helper.remove_first_transformed_data(
                 self._engineered_data
             )
         )
@@ -680,7 +717,7 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
 
     def _perform_common_not_stationary(self, column: str) -> None:
         self._engineered_data = self._engineered_data.drop(column, axis=1)
-        self._columns_to_transform.remove(column)
+
 
     def _apply_data_scaling(self) -> None:
         self._scaler_applied = self._obtain_pickle_inference(
@@ -741,7 +778,6 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
 
         for column in self._columns_to_transform:
             self._current_column = column
-
             best_transformation = self.coordinate_stationarity(
                 train_data[column]
             )
@@ -789,7 +825,7 @@ class OutputDataEngineering(BaseInputOutputDataEngineering):
             / self._engineered_data[self._processor._config["attributes"][1]]
         ) - 1
         self._engineered_data =\
-            self._data_processor_helper.remove_data_for_stationarity(
+            self._data_processor_helper.remove_first_transformed_data(
                 self._engineered_data
             )
         columns_to_keep = {"return"}
@@ -1072,7 +1108,7 @@ class FutureCovariatesProcessor:
             start=0, stop=len(self._data_processor_helper.market_dates)
         )
         self._future_covariates = (
-            self._data_processor_helper.remove_data_for_stationarity(
+            self._data_processor_helper.remove_first_transformed_data(
                 self._data_processor_helper.market_dates.copy()
             )
         )
@@ -1115,12 +1151,13 @@ class FutureCovariatesProcessor:
         return df
 
     def _scale(self, feature: str, data: pd.Series, fit: bool) -> pd.Series:
-        data_reshaped = data.values.reshape(-1, 1)
-        if fit:
+
+        if fit and self._config["common"]["scaling"]:
+            data_reshaped = data.values.reshape(-1, 1)
             self._scaler[feature] = MinMaxScaler()
             self._scaler[feature].fit(data_reshaped)
-        return self._scaler[feature].transform(data_reshaped)
-
+            return self._scaler[feature].transform(data_reshaped)
+        return data
 
 class Reddit(BaseDataProcessor):
     def __init__(

@@ -2,13 +2,16 @@ from torchmetrics import Metric
 import torch
 from pytorch_forecasting import TemporalFusionTransformer, DeepAR, NHiTS, RecurrentNetwork
 from statistics import median
+from mean_reversion.config.config_utils import ConfigManager
 
 class PortfolioReturnMetric(Metric):
     is_differentiable = False
     higher_is_better = True
     full_state_update = True
-    def __init__(self, dist_sync_on_step=True):
+    def __init__(self, dist_sync_on_step=True, config_manager = ConfigManager()):
         super().__init__(dist_sync_on_step=dist_sync_on_step)
+
+        self._lower_index, self._upper_index = config_manager.get_confidence_indexes()
         self.add_state("portfolio_value", default=torch.tensor(0.0), dist_reduce_fx="sum")
 
     def update(self, preds: torch.Tensor, target_tensor: tuple):
@@ -16,20 +19,29 @@ class PortfolioReturnMetric(Metric):
 
         preds = values.tolist()
         if all(isinstance(lst, list) for lst in preds):
-            predictions = [median(lst) for lst in preds]
+            sorted_preds = [sorted(lst) for lst in preds]
+            low_predictions = [lst[self._lower_index] for lst in sorted_preds]
+            high_predictions =[lst[self._upper_index] for lst in sorted_preds]
         else :
-            predictions = preds
+            low_predictions = preds
+            high_predictions = preds
 
         target_tensor = target_tensor[0]
 
         target = target_tensor.squeeze().tolist()
 
         portfolio_value = 1.0
-        for pred, actual in zip(predictions, target):
-            if pred >= 0:
+        no_position_count = 0
+        for actual, low_pred, high_pred in zip( target,
+                                                     low_predictions,
+                                                     high_predictions):
+            if low_pred >= 0:
                 portfolio_value *= (1 + actual)
-            else:
+            elif high_pred < 0:
                 portfolio_value *= (1 - actual)
+            else:
+               no_position_count +=1
+
         self.portfolio_value += portfolio_value-1
 
 
