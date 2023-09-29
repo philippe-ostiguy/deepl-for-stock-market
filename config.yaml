@@ -3,8 +3,8 @@ common :
   end_date : '2023-06-15'
   max_missing_data : .02
   fetching : False
-  preprocessing : True
-  engineering : True
+  preprocessing : False
+  engineering : False
   model_phase : 'train'
   train_test_split : [.7,.15,.15]
   correlation_threshold : 0.6
