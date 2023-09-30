@@ -599,12 +599,11 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
                 self._engineered_data
             )
         )
+        self._transformed_columns = [ col for col in
+                                      self._engineered_data.columns.tolist()
+                                      if col != RAW_ATTRIBUTES[0]]
 
-        if [
-            col
-            for col in self._engineered_data.columns.tolist()
-            if col != RAW_ATTRIBUTES[0]
-        ]:
+        if self._transformed_columns :
             if self._processor._config["common"]["scaling"]:
                 self._dispatch_feature_engineering("data_scaling")
             self._data_processor_helper.data_to_write_ts = self._engineered_data
@@ -706,7 +705,7 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
             self._engineered_data
         ).copy()
 
-        for column in self._columns_to_transform:
+        for column in self._transformed_columns:
             scaler = self._scaler_to_apply()
             train_data[column] = scaler.fit_transform(train_data[[column]])
             predict_data[column] = scaler.transform(predict_data[[column]])
@@ -731,7 +730,7 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
         )
 
         if self._scaler_applied is not None:
-            for column in self._columns_to_transform:
+            for column in self._transformed_columns:
                 if column in self._scaler_applied:
                     self._engineered_data[column] = self._scaler_applied[
                         column
@@ -1156,12 +1155,15 @@ class FutureCovariatesProcessor:
 
     def _scale(self, feature: str, data: pd.Series, fit: bool) -> pd.Series:
 
-        if fit and self._config["common"]["scaling"]:
-            data_reshaped = data.values.reshape(-1, 1)
+        if not self._config["common"]["scaling"]:
+            return data
+        data_reshaped = data.values.reshape(-1, 1)
+        if fit :
             self._scaler[feature] = MinMaxScaler()
             self._scaler[feature].fit(data_reshaped)
             return self._scaler[feature].transform(data_reshaped)
-        return data
+        else :
+            return self._scaler[feature].transform(data_reshaped)
 
 class Reddit(BaseDataProcessor):
     def __init__(

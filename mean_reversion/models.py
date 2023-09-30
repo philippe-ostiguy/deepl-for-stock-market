@@ -113,8 +113,6 @@ class Modeler:
             setattr(self, f'_output_{dataset}', output)
 
     def _obtain_dataloader(self):
-
-
         for data_type in self._datasets:
             input_past = getattr(self, f'_input_past_{data_type}')
             input_future = getattr(self, f'_input_future_{data_type}',
@@ -144,6 +142,7 @@ class Modeler:
             add_encoder_length = False
             add_target_scales = False
             static_categoricals = []
+
         self._training_dataset = TimeSeriesDataSet(
             self._train_data,
             time_idx="time",
