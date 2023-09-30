@@ -9,7 +9,7 @@ from pytorch_forecasting import TimeSeriesDataSet, \
 from pytorch_forecasting.metrics import MAE, SMAPE, \
     MultivariateNormalDistributionLoss
 from pytorch_forecasting.data import GroupNormalizer
-from typing import Callable
+from typing import Callable, Union
 import matplotlib.pyplot as plt
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
 import os
@@ -19,10 +19,12 @@ from sklearn.metrics import mean_squared_error, f1_score
 import threading
 from mean_reversion.config.model_customizer import CustomNHiTS,CustomDeepAR,CustomTemporalFusionTransformer,CustomlRecurrentNetwork
 from mean_reversion.config.config_utils import ConfigManager
-from mean_reversion.config.constants import PICKLE
 from mean_reversion.utils import clear_directory_content, read_json, save_json
 import pytz
 import datetime
+import re
+import subprocess
+import glob
 
 
 CUSTOM_MODEL = {
@@ -51,6 +53,7 @@ class Modeler:
     def run(self):
         self._obtain_data()
         for model in self._config["hyperparameters"]["models"]:
+
             self._model_name = model
             self._obtain_dataloader()
             self._model_dir = f'models/{self._model_name}'
@@ -60,8 +63,8 @@ class Modeler:
             self._coordinate_evaluation()
             self._coordinate_interpretions()
             self._save_metrics_from_tensorboardflow()
-            # if self._is_new_model_better:
-            #     self._save_best_model(model)
+            self._coordinate_select_best_model()
+
             self._save_run_information()
 
         music_thread = threading.Thread(
@@ -113,18 +116,18 @@ class Modeler:
             setattr(self, f'_output_{dataset}', output)
 
     def _obtain_dataloader(self):
-        for data_type in self._datasets:
-            input_past = getattr(self, f'_input_past_{data_type}')
-            input_future = getattr(self, f'_input_future_{data_type}',
+        for dataset_type in self._datasets:
+            input_past = getattr(self, f'_input_past_{dataset_type}')
+            input_future = getattr(self, f'_input_future_{dataset_type}',
                                    pd.DataFrame())
-            output = getattr(self, f'_output_{data_type}')[['return']]
+            output = getattr(self, f'_output_{dataset_type}')[['return']]
 
             if not input_future.empty:
                 input_future = input_future.drop(columns=['time'])
 
             data = pd.concat([input_past, input_future, output], axis=1)
             data['group'] = 'group_1'
-            setattr(self, f'_{data_type}_data', data)
+            setattr(self, f'_{dataset_type}_data', data)
 
 
         self._continuous_cols = [col for col in self._input_past_train.columns if col not in ["time"]]
@@ -229,16 +232,29 @@ class Modeler:
                                                features_sensitivity_path,
                                                self._best_model.plot_prediction_actual_by_variable)
 
+    def _coordinate_select_best_model(self):
+        self._is_new_model_better = True
+        self._best_metrics = {}
+        self._current_metrics = {}
+        for dataloader, data, dataset_type in [(self._predict_dataloader, self._predict_data, 'predict'), (self._test_dataloader, self._test_data, 'test')]:
+            if dataloader is None or data is None:
+                continue
+            self._dataset_type = dataset_type
+            self._select_best_model()
+            if self._is_new_model_better:
+                self._save_best_model()
+
+
     def _select_best_model(self) -> None:
         best_model_metrics_file = self._obtain_best_metrics_path()
         if best_model_metrics_file:
-            self._best_metrics[self._current_dataset]= read_json(best_model_metrics_file)[self._current_dataset]
-            self._current_metrics[self._current_dataset] = self._filter_relevant_metrics()
+            self._best_metrics[self._dataset_type]= read_json(best_model_metrics_file)[self._dataset_type]
+            self._current_metrics[self._dataset_type] = self._filter_relevant_metrics()
             if self._is_new_model_better:
-                is_model_better_func = getattr(self, f"_is_model_better_{self._current_dataset}")
+                is_model_better_func = getattr(self, f"_is_model_better_{self._dataset_type}")
                 self._is_new_model_better = is_model_better_func()
         else:
-            self._save_best_model(self._model_name)
+            self._save_best_model()
 
     def _obtain_best_metrics_path(self):
         most_recent_directory = self._obtain_most_recent_directory()
@@ -250,35 +266,60 @@ class Modeler:
         return None
 
 
+    def _obtain_most_recent_directory(self) -> Union[str,None]:
+        pattern = re.compile("^\d{8}$")
+        directories = [
+            d
+            for d in os.listdir(self._config["common"]["best_model_path"])
+            if os.path.isdir(os.path.join(self._config["common"]["best_model_path"], d))
+        ]
+        if directories :
+            date_directories = [d for d in directories if pattern.match(d)]
+
+            date_directories.sort(reverse=True)
+            most_recent_directory = date_directories[0]
+
+            return os.path.join(self._config["common"]["best_model_path"], most_recent_directory)
+        return None
+
     def _save_best_model(self) -> None:
         model_dir = os.path.join('models', self._model_name)
+
         best_model_dir = os.path.join(
-            self._config["common"]["best_model_path"], datetime.datetime.now().strftime("%Y%m%d"), self._model_name )
-        best_root_dir = os.path.join(
-            self._config["common"]["best_model_path"], datetime.datetime.now().strftime("%Y%m%d")
+            self._config["common"]["best_model_path"],
+            datetime.datetime.now().strftime("%Y%m%d"),
+            self._model_name
         )
+
+        best_root_dir = os.path.join(
+            self._config["common"]["best_model_path"],
+            datetime.datetime.now().strftime("%Y%m%d")
+        )
+        if os.path.exists(best_root_dir):
+            shutil.rmtree(best_root_dir)
         shutil.copytree(model_dir, best_model_dir)
-
         shutil.copy("config.yaml", best_root_dir)
-        pickle_dir = os.path.join(best_root_dir, PICKLE)
-        os.makedirs(pickle_dir, exist_ok=True)
-        for file in self._config["inputs"]["past_covariates"]["common"][
-            "pickle"
-        ].values():
-            shutil.copy(file, pickle_dir)
+
+        ckpt_files = glob.glob(os.path.join(best_model_dir, '*.ckpt'))
+        for file in ckpt_files:
+            os.remove(file)
+
+        subprocess.run(['git', 'add',best_root_dir])
 
 
-    def _is_model_better_evaluation(
+    def _is_model_better_predict(
         self) -> bool:
-        for metric in self._current_metrics[self._current_dataset]:
+        for metric in self._current_metrics[self._dataset_type]:
             better_func = getattr(self, f"_is_{metric}_performance_better")
-            if not better_func(self._current_metrics[self._current_dataset][metric], self._best_metrics[self._current_dataset][metric]):
+            if metric not in self._best_metrics[self._dataset_type]:
+                return True
+            if not better_func(self._current_metrics[self._dataset_type][metric], self._best_metrics[self._dataset_type][metric]):
                 return False
         return True
 
     def _is_model_better_test(self) -> bool:
-        if 'return_on_risk' in self._current_metrics[self._current_dataset]:
-            if self._current_metrics['test']['return_on_risk'] < (.5 * self._current_metrics['evaluation']['return_on_risk']):
+        if 'return_on_risk' in self._current_metrics[self._dataset_type]:
+            if self._current_metrics['test']['return_on_risk'] < (.4 * self._current_metrics['predict']['return_on_risk']):
                 return False
         return True
 
@@ -343,6 +384,8 @@ class Modeler:
     def _calculate_metrics(self,dataloader, data):
         self._all_predicted_returns = []
         self._all_actual_returns = []
+        self._preds_class = []
+        self._actual_class = []
         self._time_indices = []
         self._cumulative_predicted_return = 1
         self._cumulative_actual_return = 1
@@ -361,14 +404,18 @@ class Modeler:
             upper_return = current_prediction[0,self._upper_index]
 
             actual_return = predictions.y[0][i].item()
+            self._preds_class.append(median_pred_return)
+            self._actual_class.append(actual_return)
 
             if lower_return >= 0:
                 self._cumulative_predicted_return *= (
                         1 + actual_return)
+
             elif upper_return < 0:
                 self._cumulative_predicted_return *= (1 - actual_return)
             else:
-               pass
+                self._preds_class.pop()
+                self._actual_class.pop()
 
             self._cumulative_actual_return *= (1 + actual_return)
             self._cumulative_max_possible *= (
@@ -384,8 +431,8 @@ class Modeler:
 
     def _process_metrics(self,forecast_data):
         predicted_return_class = [1 if ret >= 0 else 0 for ret in
-                                  self._all_predicted_returns]
-        actual_return_class = [1 if ret >= 0 else 0 for ret in self._all_actual_returns]
+                                  self._preds_class]
+        actual_return_class = [1 if ret >= 0 else 0 for ret in self._actual_class]
         f1_score_value = f1_score(actual_return_class, predicted_return_class,
                                   average='weighted')
         rmse = np.sqrt(
@@ -396,6 +443,15 @@ class Modeler:
         naive_forecast_rmse = np.sqrt(
             mean_squared_error(self._all_actual_returns, naive_forecast))
 
+        num_days = len(self._all_actual_returns)
+        annualized_return = (self._cumulative_predicted_return ) ** (252 / num_days) - 1
+        actual_annualized_return = (self._cumulative_actual_return)** (252 / num_days) - 1
+        actual_daily_returns = np.array(
+            self._all_actual_returns)
+        annualized_risk = np.std(actual_daily_returns) * (252 ** 0.5)
+        return_on_risk = annualized_return / annualized_risk if annualized_risk != 0 else 0
+        actual_return_on_risk = actual_annualized_return / annualized_risk if annualized_risk != 0 else 0
+
         self._metrics = {
             "rmse": rmse,
             "f1_score": f1_score_value,
@@ -404,25 +460,27 @@ class Modeler:
             "return": self._cumulative_predicted_return - 1,
             "actual_return": self._cumulative_actual_return - 1,
             "max_possible_return": self._cumulative_max_possible - 1,
+            "return_on_risk" : return_on_risk,
+            "actual_return_on_risk" : actual_return_on_risk
         }
 
 
-    def _save_metrics(self,data_type):
+    def _save_metrics(self,dataset_type):
         metrics_path = os.path.join(
             f'{self._model_dir}', 'metrics.json')
         if os.path.exists(metrics_path):
             with open(metrics_path, 'r', encoding='utf-8') as f:
                 existing_metrics = json.load(f)
-            existing_metrics[data_type] = self._metrics
+            existing_metrics[dataset_type] = self._metrics
         else:
-            existing_metrics = {data_type: self._metrics}
+            existing_metrics = {dataset_type: self._metrics}
 
         with open(metrics_path, 'w', encoding='utf-8') as f:
             json.dump(existing_metrics, f, ensure_ascii=False, indent=4)
 
 
     def _plot_predictions(self,
-                         data_type):
+                         dataset_type):
         plt.figure(figsize=(10, 6))
         plt.plot(self._time_indices, self._all_predicted_returns, color='blue',
                  label='Predicted Returns')
@@ -430,22 +488,22 @@ class Modeler:
                  label='Actual Returns')
         plt.xlabel('Time')
         plt.ylabel('Return')
-        plt.title(f'Actual vs Predicted Returns over time - {data_type}')
+        plt.title(f'Actual vs Predicted Returns over time - {dataset_type}')
         plt.legend()
         plt.savefig(os.path.join(f'models/{self._model_name}',
-                                 f'actuals_vs_predictions_{data_type}.png'))
+                                 f'actuals_vs_predictions_{dataset_type}.png'))
 
 
     def _coordinate_evaluation(self):
 
-        for dataloader, data, data_type in [(self._predict_dataloader, self._predict_data, 'predict'), (self._test_dataloader, self._test_data, 'test')]:
+        for dataloader, data, dataset_type in [(self._predict_dataloader, self._predict_data, 'predict'), (self._test_dataloader, self._test_data, 'test')]:
             if dataloader is None or data is None:
                 continue
 
             self._calculate_metrics( dataloader, data)
             self._process_metrics(data)
-            self._save_metrics(data_type)
-            self._plot_predictions(data_type)
+            self._save_metrics(dataset_type)
+            self._plot_predictions(dataset_type)
 
     @staticmethod
     def _cleanup_logs(base_dir, keep=5):
