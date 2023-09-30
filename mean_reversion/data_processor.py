@@ -526,7 +526,11 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
             if p_value < 0.05:
                 skewness = stats.skew(transformed_data)
                 kurtosis = stats.kurtosis(transformed_data)
-                if -2 <= skewness <= 7 and -2 <= kurtosis <= 7:
+                if not self._processor._config["common"]["check_bell_shape"]:
+                    valid_transformations.append(
+                        (name, p_value, skewness, kurtosis))
+
+                elif -2 <= skewness <= 7 and -2 <= kurtosis <= 7:
                     valid_transformations.append(
                         (name, p_value, skewness, kurtosis))
         #self.TEMPO_FCT_MAKE_PLOT(data)

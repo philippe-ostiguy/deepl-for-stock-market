@@ -3,12 +3,13 @@ common :
   end_date : '2023-06-15'
   max_missing_data : .02
   fetching : False
-  preprocessing : True
-  engineering : True
+  preprocessing : False
+  engineering : False
   model_phase : 'train'
   train_test_split : [.7,.15,.15]
   correlation_threshold : 0.6
   min_validation_forecasts : 95
+  check_bell_shape : False
   hyperparameters_optimization :
     is_pruning : True
     is_optimizing : False
@@ -28,7 +29,7 @@ inputs:
     - source: 'av'
       data:
         - 'SPY'
-#        - 'set_dynamically_50_largest_stocks'
+        - 'set_dynamically_50_largest_stocks'
         - 'NATURAL_GAS'
         - '3month'
         - '10year'
@@ -41,14 +42,14 @@ inputs:
         - 'AMZN'
     - source : 'fred'
       data:
-#        - 'set_dynamically'
+        - 'set_dynamically'
         - 'T5YIE'
         - 'T10YIE'
         - 'DEXUSNZ'
         - 'VIXCLS'
     - source : 'macrotrends'
       data :
-#         - 'set_dynamically'
+         - 'set_dynamically'
          - 'wheat'
          - 'corn'
   future_covariates :
@@ -85,7 +86,7 @@ hyperparameters:
     callbacks :
       EarlyStopping :
         monitor : 'val_PortfolioReturnMetric'
-        patience : 50
+        patience : 30
         verbose : False
         mode : 'max'
       ModelCheckPoint :
@@ -111,13 +112,12 @@ hyperparameters:
       outputsize : 7
     NHiTS:
       hidden_size: 1024
-      loss: 'NormalDistributionLoss'
-      n_layers : 4
+      loss: 'QuantileLoss'
       downsample_frequencies : [1,1,1]
       pooling_sizes : [4,2,1]
       n_blocks : [2,2,2]
       learning_rate : 0.001
-      backcast_loss_ratio : 0.05
+      backcast_loss_ratio : 0.0
       weight_decay : 0.01
 #    RecurrentNetwork :
 #      cell_type: 'LSTM'

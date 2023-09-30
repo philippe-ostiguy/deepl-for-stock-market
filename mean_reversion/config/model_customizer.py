@@ -16,7 +16,6 @@ class PortfolioReturnMetric(Metric):
 
     def update(self, preds: torch.Tensor, target_tensor: tuple):
         values = preds['prediction'].detach().cpu().numpy().squeeze()
-
         preds = values.tolist()
         if all(isinstance(lst, list) for lst in preds):
             sorted_preds = [sorted(lst) for lst in preds]
@@ -76,6 +75,7 @@ class BaseReturnMetricModel:
         self.log('val_PortfolioReturnMetric', compounded_return)
         self.validation_step_outputs.clear()
         self.portfolio_metric.reset()
+        super().on_validation_epoch_end()
 
 class CustomTemporalFusionTransformer(BaseReturnMetricModel, TemporalFusionTransformer):
     pass

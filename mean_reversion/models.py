@@ -10,7 +10,6 @@ from pytorch_forecasting.metrics import MAE, SMAPE, \
     MultivariateNormalDistributionLoss
 from pytorch_forecasting.data import GroupNormalizer
 from typing import Callable
-from mean_reversion.utils import clear_directory_content, read_json
 import matplotlib.pyplot as plt
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
 import os
@@ -21,6 +20,8 @@ import threading
 from mean_reversion.config.model_customizer import CustomNHiTS,CustomDeepAR,CustomTemporalFusionTransformer,CustomlRecurrentNetwork
 from mean_reversion.config.config_utils import ConfigManager
 from mean_reversion.config.constants import PICKLE
+from mean_reversion.utils import clear_directory_content, read_json, save_json
+import pytz
 import datetime
 
 
@@ -61,6 +62,7 @@ class Modeler:
             self._save_metrics_from_tensorboardflow()
             # if self._is_new_model_better:
             #     self._save_best_model(model)
+            self._save_run_information()
 
         music_thread = threading.Thread(
             target=os.system('afplay super-mario-bros.mp3'))
@@ -192,14 +194,14 @@ class Modeler:
             callbacks_list = None
 
         self._logger = TensorBoardLogger(self._lightning_logs_dir, name= self._model_name)
-        trainer = pl.Trainer(max_epochs=self._params["epochs"],
+        self._trainer = pl.Trainer(max_epochs=self._params["epochs"],
                              callbacks=callbacks_list,
                              logger=self._logger,
                              gradient_clip_val=self._params["gradient_clip_val"],
                              enable_model_summary=True,
                              )
 
-        trainer.fit(self._model,
+        self._trainer.fit(self._model,
                     train_dataloaders=self._train_dataloader,
                     val_dataloaders=self._predict_dataloader)
 
@@ -483,3 +485,19 @@ class Modeler:
             plt.legend(loc='upper right')
             plt.savefig(f"{self._model_dir}/tensorboard/{metric.replace('/', '_')}.png")
             plt.close()
+
+
+    def _save_run_information(self) -> None:
+        data = {}
+        est = pytz.timezone('US/Eastern')
+        now_in_est = datetime.datetime.now(est)
+        date_str = now_in_est.strftime("%Y-%m-%d %H:%M")
+        data['last_run_time'] = date_str
+        data['last_epoch_trained'] = self._trainer.current_epoch
+        save_json(
+            os.path.join(
+                self._model_dir,
+                "run_information.json"
+            ),
+            data,
+        )
