@@ -1,0 +1,172 @@
+common :
+  start_date : '2005-07-01'
+  end_date : '2023-06-15'
+  max_missing_data : .02
+  fetching : False
+  preprocessing : True
+  engineering : True
+  model_phase : 'train'
+  train_test_split : [.7,.15,.15]
+  correlation_threshold : 0.6
+  min_validation_forecasts : 95
+  hyperparameters_optimization :
+    is_pruning : True
+    is_optimizing : False
+    nb_trials : 30
+
+
+  scaling: False
+  metrics_to_choose_model :
+    - 'return_on_risk'
+
+inputs:
+  past_covariates :
+  #  - source: 'reddit'
+  #    data:
+  #      - 'reddit'
+  #    size: 100
+    - source: 'av'
+      data:
+        - 'SPY'
+        - 'set_dynamically_50_largest_stocks'
+        - 'NATURAL_GAS'
+        - '3month'
+        - '10year'
+        - '2year'
+        - 'EUR'
+        - 'WTI'
+        - 'MSFT'
+        - 'GOOGL'
+        - 'AAPL'
+        - 'AMZN'
+    - source : 'fred'
+      data:
+        - 'set_dynamically'
+        - 'T5YIE'
+        - 'T10YIE'
+        - 'DEXUSNZ'
+        - 'VIXCLS'
+    - source : 'macrotrends'
+      data :
+         - 'set_dynamically'
+         - 'wheat'
+         - 'corn'
+  future_covariates :
+      data:
+        - 'day'
+        - 'month'
+
+output :
+  source : 'av'
+  data : 'SPY'
+  attributes :
+    - '4. close'
+    - '1. open'
+
+hyperparameters:
+  common:
+    confidence_level : .7
+    batch_size: 16
+    epochs: 400
+    num_loader_workers : 4
+    random_state: 42
+    gradient_clip_val : 1
+#    optimizer_kwargs: {"lr": 0.001}
+#    lr_scheduler_cls: ""
+#    lr_scheduler_kwargs:
+#      max_lr: null
+#      total_steps: null
+#      pct_start: 0.1
+#      anneal_strategy: "linear"
+#      cycle_momentum: False
+    likelihood: [0.05, 0.1, 0.3, 0.5, 0.7, 0.9, 0.95]
+    max_encoder_length: 64
+    max_prediction_length: 1
+    callbacks :
+      EarlyStopping :
+        monitor : 'val_PortfolioReturnMetric'
+        patience : 50
+        verbose : False
+        mode : 'max'
+      ModelCheckPoint :
+        monitor : 'val_PortfolioReturnMetric'
+        mode : 'max'
+        save_top_k : 1
+        filename : 'best_model'
+        verbose : True
+    pl_trainer_kwargs :
+      callbacks:
+        - 'EarlyStopping'
+        - 'ModelCheckPoint'
+  models :
+    TemporalFusionTransformer:
+      loss: 'QuantileLoss'
+      learning_rate: 0.001
+      hidden_size: 256
+      lstm_layers : 3
+      attention_head_size: 8
+      dropout: 0.1
+      hidden_continuous_size: 32
+      #reduce_on_plateau_patience: 5
+      outputsize : 7
+    NHiTS:
+      hidden_size: 1024
+      loss: 'NormalDistributionLoss'
+      n_layers : 4
+      downsample_frequencies : [1,1,1]
+      pooling_sizes : [4,2,1]
+      n_blocks : [2,2,2]
+      learning_rate : 0.001
+      backcast_loss_ratio : 0.05
+      weight_decay : 0.01
+#    RecurrentNetwork :
+#      cell_type: 'LSTM'
+#      hidden_size: 32
+#      rnn_layers: 3
+#      dropout: 0.1
+#      loss: 'RMSE'
+#    DeepAR:
+#      cell_type : 'LSTM'
+#      hidden_size: 32
+#      rnn_layers: 3
+#      dropout : .1
+#      loss : 'NormalDistributionLoss'
+
+hyperparameters_optimization:
+  common:
+
+    batch_size: [8, 64]
+    n_epochs: [100,500]
+    dropout: [0.02, 0.5]
+    optimizer_kwargs:
+       lr: [0.0001,0.1]
+#    lr_scheduler_kwargs:
+#      max_lr: [0.1, 1.0]
+#      pct_start: [0.1, 0.5]
+  models:
+#    TiDEModel:
+#      num_encoder_layers: [1,2,3]
+#      num_decoder_layers: [1,2,3]
+#      decoder_output_dim: [4,8,16,32]
+#      hidden_size: [256,512,1024]
+#      temporal_width: [2,4,8,16]
+#      temporal_decoder_hidden: [32,64,128]
+#      use_layer_norm: [True, False]
+#      use_reversible_instance_norm: [True, False]
+#    TFTModel:
+#      num_attention_heads: [1, 8]
+#      hidden_size: [32, 128]
+#      hidden_continuous_size: [8, 32]
+#      lstm_layers: [1, 3]
+#      full_attention : [True, False]
+#    TransformerModel:
+#      d_model: [4, 16]
+#      nhead: [2, 8]
+#      num_encoder_layers: [2, 8]
+#      num_decoder_layers: [2, 8]
+#      dim_feedforward: [64, 256]
+#    NBEATSModel:
+#      num_blocks: [2, 6]
+#      num_stacks: [8, 32]
+#      num_layers: [1, 5]
+#      layer_widths: [32, 256]
