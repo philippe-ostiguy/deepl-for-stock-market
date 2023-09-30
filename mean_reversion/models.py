@@ -163,6 +163,7 @@ class Modeler:
 
         )
 
+
         self._train_dataloader = self._training_dataset.to_dataloader(train=True, batch_size=self._params['batch_size'])
         self._predict_dataset = TimeSeriesDataSet.from_dataset(self._training_dataset, self._predict_data, predict=False, stop_randomization=True)
         self._predict_dataloader = self._predict_dataset.to_dataloader(train=False, batch_size=self._params['batch_size']*1000)

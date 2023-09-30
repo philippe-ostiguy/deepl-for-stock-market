@@ -3,20 +3,20 @@ common :
   end_date : '2023-06-15'
   max_missing_data : .02
   fetching : False
-  preprocessing : False
-  engineering : False
+  preprocessing : True
+  engineering : True
   model_phase : 'train'
   train_test_split : [.7,.15,.15]
   correlation_threshold : 0.6
   min_validation_forecasts : 95
-  check_bell_shape : False
+  check_bell_shape : True
   hyperparameters_optimization :
     is_pruning : True
     is_optimizing : False
     nb_trials : 30
 
 
-  scaling: False
+  scaling: True
   metrics_to_choose_model :
     - 'return_on_risk'
 
@@ -86,7 +86,7 @@ hyperparameters:
     callbacks :
       EarlyStopping :
         monitor : 'val_PortfolioReturnMetric'
-        patience : 30
+        patience : 20
         verbose : False
         mode : 'max'
       ModelCheckPoint :
