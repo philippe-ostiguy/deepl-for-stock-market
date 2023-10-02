@@ -3,20 +3,21 @@ common :
   end_date : '2023-06-15'
   max_missing_data : .02
   fetching : False
-  preprocessing : False
-  engineering : False
+  preprocessing : True
+  engineering : True
   model_phase : 'train'
-  train_test_split : [.7,.15,.15]
-  correlation_threshold : 0.6
+  train_test_split : [.8,.10,.10]
+  correlation_threshold : 1
   min_validation_forecasts : 95
   check_bell_shape : True
+  make_data_stationary : True
   hyperparameters_optimization :
     is_pruning : True
     is_optimizing : False
     nb_trials : 30
 
 
-  scaling: True
+  scaling: False
   metrics_to_choose_model :
     - 'return_on_risk'
 
@@ -66,12 +67,12 @@ output :
 
 hyperparameters:
   common:
-    confidence_level : .7
+    confidence_level : .8
     batch_size: 16
     epochs: 400
     num_loader_workers : 4
     random_state: 42
-    gradient_clip_val : 1
+    gradient_clip_val : .1
 #    optimizer_kwargs: {"lr": 0.001}
 #    lr_scheduler_cls: ""
 #    lr_scheduler_kwargs:
@@ -80,13 +81,13 @@ hyperparameters:
 #      pct_start: 0.1
 #      anneal_strategy: "linear"
 #      cycle_momentum: False
-    likelihood: [0.05, 0.1, 0.3, 0.5, 0.7, 0.9, 0.95]
+    likelihood: [0.05, 0.1, 0.2, 0.5, 0.8, 0.9, 0.95]
     max_encoder_length: 64
     max_prediction_length: 1
     callbacks :
       EarlyStopping :
         monitor : 'val_PortfolioReturnMetric'
-        patience : 35
+        patience : 40
         verbose : False
         mode : 'max'
       ModelCheckPoint :
@@ -110,15 +111,15 @@ hyperparameters:
       hidden_continuous_size: 32
       #reduce_on_plateau_patience: 5
       outputsize : 7
-    NHiTS:
-      hidden_size: 1024
-      loss: 'QuantileLoss'
-      downsample_frequencies : [1,1,1]
-      pooling_sizes : [4,2,1]
-      n_blocks : [2,2,2]
-      learning_rate : 0.001
-      backcast_loss_ratio : 0.0
-      weight_decay : 0.01
+#    NHiTS:
+#      hidden_size: 1024
+#      loss: 'QuantileLoss'
+#      downsample_frequencies : [1,1,1]
+#      pooling_sizes : [4,2,1]
+#      n_blocks : [2,2,2]
+#      learning_rate : 0.001
+#      backcast_loss_ratio : 0.0
+#      weight_decay : 0.01
 #    RecurrentNetwork :
 #      cell_type: 'LSTM'
 #      hidden_size: 32

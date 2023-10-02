@@ -2,7 +2,6 @@ from typing import Optional
 
 from mean_reversion.data_processor import (
     BaseDataProcessor,
-    Reddit,
     AlphaVantage,
     FRED,
     MacroTrends
@@ -22,7 +21,7 @@ class DataSourceFactory:
             return Reddit(
                 specific_config=data_for_source, data_processor_helper=data_processor_helper, is_input_feature=is_input_feature
             )
-        elif source == "av":
+        if source == "av":
             return AlphaVantage(
                 specific_config=data_for_source, data_processor_helper=data_processor_helper, is_input_feature=is_input_feature
             )

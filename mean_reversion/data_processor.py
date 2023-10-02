@@ -512,6 +512,8 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
 
     def coordinate_stationarity(self, data: pd.Series) -> Optional[str]:
         valid_transformations = []
+        if not self._processor._config["common"]["make_data_stationary"] :
+            return "identity"
 
         for name, transform_function in self._transformations:
             transformed_data = transform_function(data)
@@ -823,15 +825,20 @@ class OutputDataEngineering(BaseInputOutputDataEngineering):
             ]["preprocessed"]
         )
 
-        self._engineered_data["return"] = (
+        if not self._processor._config["common"]["make_data_stationary"]:
+            self._engineered_data["target"] = self._engineered_data[self._processor._config["attributes"][0]]
+
+        else :
+            self._engineered_data["target"] = (
             self._engineered_data[self._processor._config["attributes"][0]]
             / self._engineered_data[self._processor._config["attributes"][1]]
         ) - 1
+
         self._engineered_data =\
             self._data_processor_helper.remove_first_transformed_data(
                 self._engineered_data
             )
-        columns_to_keep = {"return"}
+        columns_to_keep = {"target"}
         self._engineered_data = self._engineered_data[[*columns_to_keep]]
 
         train_data = self._data_processor_helper.obtain_train_data(

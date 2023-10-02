@@ -1,7 +1,7 @@
 from torchmetrics import Metric
 import torch
 from pytorch_forecasting import TemporalFusionTransformer, DeepAR, NHiTS, RecurrentNetwork
-from statistics import median
+from pytorch_forecasting.metrics.base_metrics import MultiHorizonMetric
 from mean_reversion.config.config_utils import ConfigManager
 
 class PortfolioReturnMetric(Metric):
@@ -12,11 +12,13 @@ class PortfolioReturnMetric(Metric):
         super().__init__(dist_sync_on_step=dist_sync_on_step)
 
         self._lower_index, self._upper_index = config_manager.get_confidence_indexes()
+        self._config =config_manager.config
         self.add_state("portfolio_value", default=torch.tensor(0.0), dist_reduce_fx="sum")
 
     def update(self, preds: torch.Tensor, target_tensor: tuple):
         values = preds['prediction'].detach().cpu().numpy().squeeze()
         preds = values.tolist()
+
         if all(isinstance(lst, list) for lst in preds):
             sorted_preds = [sorted(lst) for lst in preds]
             low_predictions = [lst[self._lower_index] for lst in sorted_preds]
@@ -26,17 +28,28 @@ class PortfolioReturnMetric(Metric):
             high_predictions = preds
 
         target_tensor = target_tensor[0]
-
         target = target_tensor.squeeze().tolist()
+
+
+        if not self._config["common"]["make_data_stationary"]:
+            former_target = target
+            target = [(target[i] / target[i - 1]) -1 for i in range(1, len(target))]
+
+            low_predictions = [(low_predictions[i] / former_target[i - 1]) -1 for i in
+                               range(1, len(low_predictions))]
+            high_predictions = [(high_predictions[i] / former_target[i - 1]) -1 for i in
+                                range(1, len(high_predictions))]
+
+
 
         portfolio_value = 1.0
         no_position_count = 0
         for actual, low_pred, high_pred in zip( target,
                                                      low_predictions,
                                                      high_predictions):
-            if low_pred >= 0:
+            if low_pred > 0 and high_pred >0:
                 portfolio_value *= (1 + actual)
-            elif high_pred < 0:
+            elif high_pred < 0 and low_pred < 0:
                 portfolio_value *= (1 - actual)
             else:
                no_position_count +=1

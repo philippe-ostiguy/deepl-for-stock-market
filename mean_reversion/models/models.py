@@ -4,10 +4,7 @@ import pandas as pd
 import lightning.pytorch as pl
 from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
 from tensorboard.backend.event_processing import event_accumulator
-from pytorch_forecasting import TimeSeriesDataSet, \
-    RecurrentNetwork, DeepAR, TemporalFusionTransformer, NHiTS
-from pytorch_forecasting.metrics import MAE, SMAPE, \
-    MultivariateNormalDistributionLoss
+from pytorch_forecasting import TimeSeriesDataSet
 from pytorch_forecasting.data import GroupNormalizer
 from typing import Callable, Union
 import matplotlib.pyplot as plt
@@ -17,7 +14,7 @@ import json
 import numpy as np
 from sklearn.metrics import mean_squared_error, f1_score
 import threading
-from mean_reversion.config.model_customizer import CustomNHiTS,CustomDeepAR,CustomTemporalFusionTransformer,CustomlRecurrentNetwork
+from mean_reversion.models.model_customizer import CustomNHiTS,CustomDeepAR,CustomTemporalFusionTransformer,CustomlRecurrentNetwork
 from mean_reversion.config.config_utils import ConfigManager
 from mean_reversion.utils import clear_directory_content, read_json, save_json
 import pytz
@@ -25,6 +22,7 @@ import datetime
 import re
 import subprocess
 import glob
+import torch
 
 
 CUSTOM_MODEL = {
@@ -64,7 +62,6 @@ class Modeler:
             self._coordinate_interpretions()
             self._save_metrics_from_tensorboardflow()
             self._coordinate_select_best_model()
-
             self._save_run_information()
 
         music_thread = threading.Thread(
@@ -89,7 +86,6 @@ class Modeler:
                 self._params[item] = None
 
     def _obtain_data(self):
-
 
         if self._config["inputs"]["future_covariates"]['data']:
             self._categorical_cols = \
@@ -120,7 +116,7 @@ class Modeler:
             input_past = getattr(self, f'_input_past_{dataset_type}')
             input_future = getattr(self, f'_input_future_{dataset_type}',
                                    pd.DataFrame())
-            output = getattr(self, f'_output_{dataset_type}')[['return']]
+            output = getattr(self, f'_output_{dataset_type}')[['target']]
 
             if not input_future.empty:
                 input_future = input_future.drop(columns=['time'])
@@ -131,14 +127,14 @@ class Modeler:
 
 
         self._continuous_cols = [col for col in self._input_past_train.columns if col not in ["time"]]
-        self._continuous_cols.append("return")
+        self._continuous_cols.append("target")
         add_encoder_length = True
         add_relative_time_idx = True
         add_target_scales = True
         static_categoricals = ["group"]
 
         if "RecurrentNetwork" in self._model_name or 'DeepAR' in self._model_name:
-            self._continuous_cols = ["return"]
+            self._continuous_cols = ["target"]
         if "NHiTS" in self._model_name :
             self._categorical_cols = []
             add_relative_time_idx = False
@@ -149,7 +145,7 @@ class Modeler:
         self._training_dataset = TimeSeriesDataSet(
             self._train_data,
             time_idx="time",
-            target="return",
+            target="target",
             group_ids=["group"],
             static_categoricals=static_categoricals,
             max_encoder_length=self._params["max_encoder_length"],
@@ -158,11 +154,7 @@ class Modeler:
             time_varying_unknown_reals=self._continuous_cols,
             add_encoder_length=add_encoder_length,
             add_relative_time_idx= add_relative_time_idx,
-            add_target_scales= add_target_scales,
-            target_normalizer=GroupNormalizer(
-                groups=["group"]
-            ),
-
+            target_normalizer= None
         )
 
 
@@ -204,6 +196,7 @@ class Modeler:
                              enable_model_summary=True,
                              )
 
+
         self._trainer.fit(self._model,
                     train_dataloaders=self._train_dataloader,
                     val_dataloaders=self._predict_dataloader)
@@ -211,7 +204,8 @@ class Modeler:
     def _obtain_best_model(self):
         best_model_path = self._model_checkpoint.best_model_path
         self._best_model = self._model.load_from_checkpoint(best_model_path)
-        #self._best_model = self._model.load_from_checkpoint('tempo/best_model.ckpt')
+        #self._best_model = self._model.load_from_checkpoint('tempo/TemporalFusionTransformer/best_model.ckpt')
+
 
 
     def _coordinate_interpretions(self):
@@ -232,6 +226,43 @@ class Modeler:
                                                features_sensitivity_path,
                                                self._best_model.plot_prediction_actual_by_variable)
 
+
+    def _interpret_features_importance(self):
+        raw_predictions = self._best_model.predict(self._predict_dataloader,
+                                                   mode="raw",
+                                                   return_x=True)
+
+        interpretations = self._best_model.interpret_output(
+            raw_predictions.output,
+            reduction="sum"
+        )
+
+        features_importance_dir = f'{self._model_dir }/features_importance'
+        os.makedirs(features_importance_dir, exist_ok=True)
+        self._save_multiple_interprations_plot(interpretations,
+                                               features_importance_dir,
+                                               self._best_model.plot_interpretation)
+
+    def _save_multiple_interprations_plot(self, interpretations,
+                                          directory_to_save,
+                                          plot_function: Callable) -> None:
+        original_backend = plt.get_backend()
+        plt.switch_backend("Agg")
+        plot_function(interpretations)
+        for i, fig_num in enumerate(plt.get_fignums()):
+            fig = plt.figure(fig_num)
+
+            for j, ax in enumerate(fig.get_axes()):
+                title = ax.get_title()
+                interpretation_file_path = os.path.join(directory_to_save,f'{title}.png')
+                fig.savefig(interpretation_file_path)
+                break
+
+            plt.close(fig)
+
+        plt.switch_backend(original_backend)
+
+
     def _coordinate_select_best_model(self):
         self._is_new_model_better = True
         self._best_metrics = {}
@@ -241,8 +272,8 @@ class Modeler:
                 continue
             self._dataset_type = dataset_type
             self._select_best_model()
-            if self._is_new_model_better:
-                self._save_best_model()
+        if self._is_new_model_better:
+            self._save_best_model()
 
 
     def _select_best_model(self) -> None:
@@ -283,7 +314,6 @@ class Modeler:
         return None
 
     def _save_best_model(self) -> None:
-        model_dir = os.path.join('models', self._model_name)
 
         best_model_dir = os.path.join(
             self._config["common"]["best_model_path"],
@@ -297,7 +327,7 @@ class Modeler:
         )
         if os.path.exists(best_root_dir):
             shutil.rmtree(best_root_dir)
-        shutil.copytree(model_dir, best_model_dir)
+        shutil.copytree(self._model_dir, best_model_dir)
         shutil.copy("config.yaml", best_root_dir)
 
         ckpt_files = glob.glob(os.path.join(best_model_dir, '*.ckpt'))
@@ -340,94 +370,79 @@ class Modeler:
             metric: self._metrics[metric] for metric in metrics_to_choose_model
         }
 
-    def _interpret_features_importance(self):
-        raw_predictions = self._best_model.predict(self._predict_dataloader,
-                                                   mode="raw",
-                                                   return_x=True)
-
-        interpretations = self._best_model.interpret_output(
-            raw_predictions.output,
-            reduction="sum"
-        )
-
-        features_importance_dir = f'{self._model_dir }/features_importance'
-        os.makedirs(features_importance_dir, exist_ok=True)
-        self._save_multiple_interprations_plot(interpretations,
-                                               features_importance_dir,
-                                               self._best_model.plot_interpretation)
-
-    def _save_multiple_interprations_plot(self, interpretations,
-                                          directory_to_save,
-                                          plot_function: Callable) -> None:
-        original_backend = plt.get_backend()
-        plt.switch_backend("Agg")
-        plot_function(interpretations)
-        for i, fig_num in enumerate(plt.get_fignums()):
-            fig = plt.figure(fig_num)
-
-            for j, ax in enumerate(
-                    fig.get_axes()):
-                title = ax.get_title()
-                interpretation_file_path = os.path.join(directory_to_save,
-                                                        f'{title}.png')
-
-
-                fig.savefig(
-                    interpretation_file_path)
-                break
-
-            plt.close(fig)
-
-        plt.switch_backend(original_backend)
-
-
     def _calculate_metrics(self,dataloader, data):
         self._all_predicted_returns = []
         self._all_actual_returns = []
+        self._all_predicted_values = []
+        self._all_actual_values = []
         self._preds_class = []
         self._actual_class = []
         self._time_indices = []
         self._cumulative_predicted_return = 1
         self._cumulative_actual_return = 1
-        self._cumulative_max_possible = 1
         self._cumulative_index = len(data) - len(
             dataloader.dataset)
+        self._nb_of_trades = 0
+        max_drawdown = 0
+        peak = self._cumulative_predicted_return
 
-        predictions = self._best_model.predict(dataloader, mode ="raw", return_x=True, return_y = True)
-        if len(predictions.output.prediction.shape) != 1:
-            pass
+        for index in range(self._raw_predictions.output.prediction.shape[0]):
+            current_prediction, indices = self._raw_predictions.output.prediction[index].sort()
 
-        for i in range(predictions.output.prediction.shape[0]):
-            current_prediction = predictions.output.prediction[i]
-            median_pred_return = current_prediction.median(dim=1).values
-            lower_return = current_prediction[0,self._lower_index]
-            upper_return = current_prediction[0,self._upper_index]
+            median_pred_value = current_prediction.median(dim=1).values
+            lower_value = current_prediction[0,self._lower_index]
+            upper_value = current_prediction[0,self._upper_index]
 
-            actual_return = predictions.y[0][i].item()
-            self._preds_class.append(median_pred_return)
-            self._actual_class.append(actual_return)
+            actual_value = self._raw_predictions.y[0][index].item()
 
-            if lower_return >= 0:
+            if not self._config["common"]["make_data_stationary"] and index  == 0:
+                continue
+
+            if not self._config["common"]["make_data_stationary"]:
+                actual_return = (actual_value/ self._raw_predictions.y[0][index -1].item()) -1
+                median_pred_return = (median_pred_value / self._raw_predictions.y[0][index -1].item()) -1
+                upper_return = (upper_value /  self._raw_predictions.y[0][index - 1].item())-1
+                lower_return = (lower_value / self._raw_predictions.y[0][index - 1].item())-1
+
+            else :
+                median_pred_return = median_pred_value
+                lower_return = lower_value
+                upper_return = upper_value
+                actual_return = actual_value
+
+            if lower_return > 0 and upper_return>0:
                 self._cumulative_predicted_return *= (
                         1 + actual_return)
+                self._nb_of_trades +=1
 
-            elif upper_return < 0:
+            elif upper_return < 0 and lower_return < 0:
                 self._cumulative_predicted_return *= (1 - actual_return)
+                self._nb_of_trades += 1
             else:
-                self._preds_class.pop()
-                self._actual_class.pop()
+                self._preds_class.append(median_pred_return)
+                self._actual_class.append(actual_return)
+
+            if self._cumulative_predicted_return > peak:
+                peak =  self._cumulative_predicted_return
+            else:
+                drawdown = (peak - self._cumulative_predicted_return) / peak
+                if drawdown > max_drawdown:
+                    max_drawdown = drawdown
+
 
             self._cumulative_actual_return *= (1 + actual_return)
-            self._cumulative_max_possible *= (
-                        1 + actual_return) if actual_return >= 0 else (
-                        1 - actual_return)
 
             self._time_indices.append(data["time"].iloc[self._cumulative_index])
             self._cumulative_index += 1
             self._all_predicted_returns.append(median_pred_return)
             self._all_actual_returns.append(actual_return)
-        self._all_predicted_returns = [prediction.item() for prediction in self._all_predicted_returns]
+            self._all_predicted_values.append(median_pred_value)
+            self._all_actual_values.append(actual_value)
 
+        self._all_predicted_returns = [prediction.item() for prediction in self._all_predicted_returns]
+        self._all_predicted_values = [prediction.item() for prediction in
+                                       self._all_predicted_values]
+        self._max_drawdown = max_drawdown
 
     def _process_metrics(self,forecast_data):
         predicted_return_class = [1 if ret >= 0 else 0 for ret in
@@ -437,7 +452,11 @@ class Modeler:
                                   average='weighted')
         rmse = np.sqrt(
             mean_squared_error(self._all_actual_returns, self._all_predicted_returns))
-        naive_forecast = forecast_data["return"].rolling(20).mean()
+        if self._params["max_encoder_length"] <= 20:
+            rolling_windows = self._params["max_encoder_length"] - 1
+        else :
+            rolling_windows = 20
+        naive_forecast = forecast_data["target"].rolling(rolling_windows).mean()
         naive_forecast = naive_forecast[len(forecast_data) - len(self._all_actual_returns):].values
 
         naive_forecast_rmse = np.sqrt(
@@ -459,9 +478,10 @@ class Modeler:
             "rmse_vs_naive": rmse / naive_forecast_rmse,
             "return": self._cumulative_predicted_return - 1,
             "actual_return": self._cumulative_actual_return - 1,
-            "max_possible_return": self._cumulative_max_possible - 1,
             "return_on_risk" : return_on_risk,
-            "actual_return_on_risk" : actual_return_on_risk
+            "actual_return_on_risk" : actual_return_on_risk,
+            "max_drawdown" : self._max_drawdown,
+            "nb_of_trades" : self._nb_of_trades
         }
 
 
@@ -479,19 +499,20 @@ class Modeler:
             json.dump(existing_metrics, f, ensure_ascii=False, indent=4)
 
 
-    def _plot_predictions(self,
-                         dataset_type):
+    def _plot_predictions(self, dataset_type):
+
         plt.figure(figsize=(10, 6))
-        plt.plot(self._time_indices, self._all_predicted_returns, color='blue',
-                 label='Predicted Returns')
-        plt.plot(self._time_indices, self._all_actual_returns, color='black',
-                 label='Actual Returns')
+        plt.plot(self._time_indices, self._all_predicted_values, color='blue',
+                 label='Predicted Values')
+        plt.plot(self._time_indices, self._all_actual_values, color='black',
+                 label='Actual Values')
         plt.xlabel('Time')
-        plt.ylabel('Return')
-        plt.title(f'Actual vs Predicted Returns over time - {dataset_type}')
+        plt.ylabel('Output')
+        plt.title(f'Actual vs Predicted Values over time - {dataset_type}')
         plt.legend()
         plt.savefig(os.path.join(f'models/{self._model_name}',
                                  f'actuals_vs_predictions_{dataset_type}.png'))
+        plt.close()
 
 
     def _coordinate_evaluation(self):
@@ -499,8 +520,11 @@ class Modeler:
         for dataloader, data, dataset_type in [(self._predict_dataloader, self._predict_data, 'predict'), (self._test_dataloader, self._test_data, 'test')]:
             if dataloader is None or data is None:
                 continue
-
-            self._calculate_metrics( dataloader, data)
+            self._raw_predictions = self._best_model.predict(dataloader,
+                                                             mode="raw",
+                                                             return_x=True,
+                                                             return_y=True)
+            self._calculate_metrics(dataloader, data)
             self._process_metrics(data)
             self._save_metrics(dataset_type)
             self._plot_predictions(dataset_type)

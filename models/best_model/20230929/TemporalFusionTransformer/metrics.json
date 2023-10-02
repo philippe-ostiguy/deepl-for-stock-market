@@ -6,7 +6,8 @@
         "rmse_vs_naive": 1.1030825273834841,
         "return": 0.336233069888086,
         "actual_return": 0.0949486990171915,
-        "max_possible_return": 44.01148196090874
+        "max_possible_return": 44.01148196090874,
+         "return_on_risk" : 0
     },
     "test": {
         "rmse": 0.011605314099318193,
@@ -15,6 +16,7 @@
         "rmse_vs_naive": 1.2331819330359926,
         "return": 0.24326422573477413,
         "actual_return": 0.19218992405873436,
-        "max_possible_return": 81.02496807176618
+        "max_possible_return": 81.02496807176618,
+        "return_on_risk" : 0
     }
 }
