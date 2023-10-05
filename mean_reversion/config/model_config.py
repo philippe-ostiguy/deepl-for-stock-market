@@ -3,7 +3,7 @@ from torch.optim.lr_scheduler import (
     ExponentialLR,
     ReduceLROnPlateau,
 )
-from pytorch_forecasting.metrics import RMSE, QuantileLoss, MASE, NormalDistributionLoss, SMAPE,DistributionLoss
+from pytorch_forecasting.metrics import RMSE, QuantileLoss, MASE, SMAPE
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
 
 LR_SCHEDULER_MAPPING = {
@@ -22,8 +22,6 @@ LOSS = {
     'RMSE' : RMSE,
     'QuantileLoss': QuantileLoss,
     'MASE' : MASE,
-    'NormalDistributionLoss' : NormalDistributionLoss,
     'SMAPE' : SMAPE,
-    'DistributionLoss' : DistributionLoss
 
 }

@@ -47,7 +47,6 @@ import torch
 from sklearn.metrics import f1_score
 from optuna import Trial
 import optuna
-import pickle
 from mean_reversion.config_utils import ConfigManager
 from mean_reversion.utils import (
     save_json,

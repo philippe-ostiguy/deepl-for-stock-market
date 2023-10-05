@@ -3,11 +3,11 @@ common :
   end_date : '2023-06-15'
   max_missing_data : .02
   fetching : False
-  preprocessing : True
-  engineering : True
+  preprocessing : False
+  engineering : False
   model_phase : 'train'
   train_test_split : [.8,.10,.10]
-  correlation_threshold : 1
+  correlation_threshold : .5
   min_validation_forecasts : 95
   check_bell_shape : True
   make_data_stationary : True
@@ -67,12 +67,13 @@ output :
 
 hyperparameters:
   common:
-    confidence_level : .8
-    batch_size: 16
-    epochs: 400
+    confidence_level : .7
+    batch_size: 64
+    epochs: 300
     num_loader_workers : 4
     random_state: 42
-    gradient_clip_val : .1
+    gradient_clip_val : .5
+    optimizer : "Ranger"
 #    optimizer_kwargs: {"lr": 0.001}
 #    lr_scheduler_cls: ""
 #    lr_scheduler_kwargs:
@@ -81,13 +82,13 @@ hyperparameters:
 #      pct_start: 0.1
 #      anneal_strategy: "linear"
 #      cycle_momentum: False
-    likelihood: [0.05, 0.1, 0.2, 0.5, 0.8, 0.9, 0.95]
+    likelihood: [0.05, 0.1, 0.3, 0.5, 0.7, 0.9, 0.95]
     max_encoder_length: 64
     max_prediction_length: 1
     callbacks :
       EarlyStopping :
         monitor : 'val_PortfolioReturnMetric'
-        patience : 40
+        patience : 30
         verbose : False
         mode : 'max'
       ModelCheckPoint :
@@ -102,7 +103,7 @@ hyperparameters:
         - 'ModelCheckPoint'
   models :
     TemporalFusionTransformer:
-      loss: 'QuantileLoss'
+      loss: 'NormalDistributionLoss'
       learning_rate: 0.001
       hidden_size: 256
       lstm_layers : 3
@@ -111,6 +112,7 @@ hyperparameters:
       hidden_continuous_size: 32
       #reduce_on_plateau_patience: 5
       outputsize : 7
+      weight_decay : 0.01
 #    NHiTS:
 #      hidden_size: 1024
 #      loss: 'QuantileLoss'
@@ -145,6 +147,17 @@ hyperparameters_optimization:
 #      max_lr: [0.1, 1.0]
 #      pct_start: [0.1, 0.5]
   models:
+    TemporalFusionTransformer:
+      loss: 'QuantileLoss'
+      learning_rate: 0.001
+      hidden_size: 256
+      lstm_layers: 3
+      attention_head_size: 8
+      dropout: 0.1
+      hidden_continuous_size: 32
+      #reduce_on_plateau_patience: 5
+      outputsize: 7
+
 #    TiDEModel:
 #      num_encoder_layers: [1,2,3]
 #      num_decoder_layers: [1,2,3]

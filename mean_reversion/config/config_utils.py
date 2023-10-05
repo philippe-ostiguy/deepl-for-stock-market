@@ -240,7 +240,7 @@ class ConfigManager:
             likelihood = common_config["likelihood"]
 
 
-        if "loss" in model_args and ('Quantile' in model_args["loss"] or 'DistributionLoss' in model_args["loss"]):
+        if "loss" in model_args and ('Quantile' in model_args["loss"]):
             if likelihood:
                 model_args['loss'] = LOSS[model_args['loss']](quantiles = likelihood)
 

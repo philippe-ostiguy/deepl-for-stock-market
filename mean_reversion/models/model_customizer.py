@@ -1,11 +1,9 @@
 from torchmetrics import Metric
 import torch
 from pytorch_forecasting import TemporalFusionTransformer, DeepAR, NHiTS, RecurrentNetwork
-from pytorch_forecasting.metrics.base_metrics import MultiHorizonMetric
 from mean_reversion.config.config_utils import ConfigManager
 
 class PortfolioReturnMetric(Metric):
-    is_differentiable = False
     higher_is_better = True
     full_state_update = True
     def __init__(self, dist_sync_on_step=True, config_manager = ConfigManager()):

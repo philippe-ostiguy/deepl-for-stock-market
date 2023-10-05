@@ -22,7 +22,10 @@ import datetime
 import re
 import subprocess
 import glob
-import torch
+import copy
+from optuna.integration import PyTorchLightningPruningCallback
+import optuna
+import pickle
 
 
 CUSTOM_MODEL = {
@@ -33,12 +36,21 @@ CUSTOM_MODEL = {
 }
 
 
+class BaseModelBuilder:
+    def __init__(
+        self,
+        config_manager: ConfigManager = ConfigManager(),
+    ):
+        self._config_manager = config_manager
+        self._config = self._config_manager.config
 
-class Modeler:
+
+class ModelBuilder(BaseModelBuilder):
     def __init__(
         self,
         config_manager: ConfigManager,
     ):
+        super(ModelBuilder, self).__init__()
         self._config_manager = config_manager
         self._config = self._config_manager.config
         self._params = {}
@@ -59,10 +71,10 @@ class Modeler:
             self._train_model()
             self._obtain_best_model()
             self._coordinate_evaluation()
-            self._coordinate_interpretions()
             self._save_metrics_from_tensorboardflow()
-            self._coordinate_select_best_model()
+            self._coordinate_interpretions()
             self._save_run_information()
+            self._coordinate_select_best_model()
 
         music_thread = threading.Thread(
             target=os.system('afplay super-mario-bros.mp3'))
@@ -154,7 +166,10 @@ class Modeler:
             time_varying_unknown_reals=self._continuous_cols,
             add_encoder_length=add_encoder_length,
             add_relative_time_idx= add_relative_time_idx,
-            target_normalizer= None
+            add_target_scales=add_target_scales,
+            target_normalizer=GroupNormalizer(
+                groups=["group"]
+            )
         )
 
 
@@ -189,13 +204,13 @@ class Modeler:
             callbacks_list = None
 
         self._logger = TensorBoardLogger(self._lightning_logs_dir, name= self._model_name)
-        self._trainer = pl.Trainer(max_epochs=self._params["epochs"],
+        self._trainer = pl.Trainer(
+                                   max_epochs=self._params["epochs"],
                              callbacks=callbacks_list,
                              logger=self._logger,
                              gradient_clip_val=self._params["gradient_clip_val"],
                              enable_model_summary=True,
                              )
-
 
         self._trainer.fit(self._model,
                     train_dataloaders=self._train_dataloader,
@@ -205,7 +220,6 @@ class Modeler:
         best_model_path = self._model_checkpoint.best_model_path
         self._best_model = self._model.load_from_checkpoint(best_model_path)
         #self._best_model = self._model.load_from_checkpoint('tempo/TemporalFusionTransformer/best_model.ckpt')
-
 
 
     def _coordinate_interpretions(self):
@@ -222,10 +236,12 @@ class Modeler:
             raw_predictions.x, raw_predictions.output)
         features_sensitivity_path = f'{self._model_dir}/features_sensitivity'
         os.makedirs(features_sensitivity_path, exist_ok=True)
-        self._save_multiple_interprations_plot(predictions_vs_actuals,
-                                               features_sensitivity_path,
-                                               self._best_model.plot_prediction_actual_by_variable)
-
+        try :
+            self._save_multiple_interprations_plot(predictions_vs_actuals,
+                                                   features_sensitivity_path,
+                                                   self._best_model.plot_prediction_actual_by_variable)
+        except :
+            pass
 
     def _interpret_features_importance(self):
         raw_predictions = self._best_model.predict(self._predict_dataloader,
@@ -367,7 +383,7 @@ class Modeler:
             "metrics_to_choose_model"
         ]
         return {
-            metric: self._metrics[metric] for metric in metrics_to_choose_model
+            metric: self._metrics[self._dataset_type][metric] for metric in metrics_to_choose_model
         }
 
     def _calculate_metrics(self,dataloader, data):
@@ -414,11 +430,12 @@ class Modeler:
                 self._cumulative_predicted_return *= (
                         1 + actual_return)
                 self._nb_of_trades +=1
+                self._preds_class.append(median_pred_return)
+                self._actual_class.append(actual_return)
 
             elif upper_return < 0 and lower_return < 0:
                 self._cumulative_predicted_return *= (1 - actual_return)
                 self._nb_of_trades += 1
-            else:
                 self._preds_class.append(median_pred_return)
                 self._actual_class.append(actual_return)
 
@@ -444,7 +461,7 @@ class Modeler:
                                        self._all_predicted_values]
         self._max_drawdown = max_drawdown
 
-    def _process_metrics(self,forecast_data):
+    def _process_metrics(self, dataset_type, forecast_data):
         predicted_return_class = [1 if ret >= 0 else 0 for ret in
                                   self._preds_class]
         actual_return_class = [1 if ret >= 0 else 0 for ret in self._actual_class]
@@ -470,8 +487,9 @@ class Modeler:
         annualized_risk = np.std(actual_daily_returns) * (252 ** 0.5)
         return_on_risk = annualized_return / annualized_risk if annualized_risk != 0 else 0
         actual_return_on_risk = actual_annualized_return / annualized_risk if annualized_risk != 0 else 0
-
-        self._metrics = {
+        if not hasattr(self, '_metrics'):
+            self._metrics = {}
+        self._metrics[dataset_type] = {
             "rmse": rmse,
             "f1_score": f1_score_value,
             "naive_forecast_rmse": naive_forecast_rmse,
@@ -491,9 +509,9 @@ class Modeler:
         if os.path.exists(metrics_path):
             with open(metrics_path, 'r', encoding='utf-8') as f:
                 existing_metrics = json.load(f)
-            existing_metrics[dataset_type] = self._metrics
+            existing_metrics[dataset_type] = self._metrics[dataset_type]
         else:
-            existing_metrics = {dataset_type: self._metrics}
+            existing_metrics = {dataset_type: self._metrics[dataset_type]}
 
         with open(metrics_path, 'w', encoding='utf-8') as f:
             json.dump(existing_metrics, f, ensure_ascii=False, indent=4)
@@ -525,7 +543,7 @@ class Modeler:
                                                              return_x=True,
                                                              return_y=True)
             self._calculate_metrics(dataloader, data)
-            self._process_metrics(data)
+            self._process_metrics(dataset_type,data)
             self._save_metrics(dataset_type)
             self._plot_predictions(dataset_type)
 
@@ -583,3 +601,222 @@ class Modeler:
             ),
             data,
         )
+
+
+class HyperpametersOptimizer:
+    def __init__(
+            self,
+            config_manager: ConfigManager,
+    ):
+        self._config_manager = config_manager
+        self._config = config_manager.config
+
+    def run(self):
+        n_trials = self._config['common']['hyperparameters_optimization'][
+            'nb_trials']
+        best_hyper_params = {}
+
+        self._obtain_data()
+        for model in self._config["hyperparameters"]["models"]:
+            self._model_name = model
+            self._obtain_dataloader()
+            self._model_dir = f'models/{self._model_name}'
+            self._clean_directory()
+            self._train_model()
+            self._obtain_best_model()
+            self._coordinate_evaluation()
+            self._save_metrics_from_tensorboardflow()
+            self._coordinate_interpretions()
+            self._save_run_information()
+            self._coordinate_select_best_model()
+
+        for model in self._config["hyperparameters_optimization"]["models"]:
+            self._current_hyperparameters = {}
+            best_hyper_params[model] = {}
+            self._model_args_assigner._model_name = self._model = model
+            self._model_args_assigner._hyperparameters_type = 'hyperparameters_optimization'
+            self._model_args_assigner._run_all()
+            self._model_args = self._model_args_assigner.model_args
+            if self._config['common']['hyperparameters_optimization'][
+                'is_pruning']:
+
+                pruner = optuna.pruners.MedianPruner(n_startup_trials=5,
+                                                     n_warmup_steps=5,
+                                                     interval_steps=5)
+            else:
+                pruner = None
+
+            study = optuna.create_study(direction='minimize', pruner=pruner)
+            study.optimize(self._objective, n_trials=n_trials,
+                           show_progress_bar=True)
+
+            best_hyper_params[model] = self._update_nested_dict(
+                self._current_hyperparameters, study.best_params,
+                best_hyper_params[model])
+            best_hyper_params[model]["work_dir"] = MODELS_PATH
+            if 'lr_scheduler_kwargs' in best_hyper_params[
+                model] and self._model_args_assigner.get_lr_scheduler_kwargs():
+                best_hyper_params[model][
+                    'lr_scheduler_kwargs'] = self._model_args_assigner.get_lr_scheduler_kwargs()
+            if 'lr_scheduler_cls' in best_hyper_params[
+                model] and self._model_args_assigner.get_lr_scheduler_cls():
+                best_hyper_params[model][
+                    'lr_scheduler_cls'] = self._model_args_assigner.get_lr_scheduler_cls()
+            if 'pl_trainer_kwargs' in best_hyper_params[
+                model] and self._model_args_assigner.get_pl_trainer_kwargs():
+                best_hyper_params[model][
+                    'pl_trainer_kwargs'] = self._model_args_assigner.get_pl_trainer_kwargs()
+            if 'torch_metrics' in best_hyper_params[
+                model] and self._model_args_assigner.get_torch_metrics():
+                best_hyper_params[model][
+                    'torch_metrics'] = self._model_args_assigner.get_torch_metrics()
+
+            if 'loss_fn' in best_hyper_params[
+                model] and self._model_args_assigner.get_loss_fn():
+                best_hyper_params[model][
+                    'loss_fn'] = self._model_args_assigner.get_loss_fn()
+
+            with open(
+                    f'{MODEL_OPTIMIZATION_PATH}/{model}/best_hyper_params.pkl',
+                    'wb') as file:
+                pickle.dump(best_hyper_params[model], file)
+
+        self._config_manager.models_hyperparameters = best_hyper_params
+
+    def _update_nested_dict(self, base_dict, updates_dict, target_dict):
+        for k, v in base_dict.items():
+            if k in updates_dict and isinstance(v, dict) and isinstance(
+                    updates_dict[k], dict):
+                target_dict[k] = self._update_nested_dict(v, updates_dict.get(k,
+                                                                              {}),
+                                                          target_dict.get(k,
+                                                                          {}))
+            else:
+                target_dict[k] = updates_dict.get(k, v)
+        return target_dict
+
+    def _objective(self, trial: optuna.Trial):
+
+        self._obtain_hyperparameters_to_optimize(trial)
+        if 'callbacks' in self._current_hyperparameters[
+            'pl_trainer_kwargs']:
+            for callback in self._current_hyperparameters['pl_trainer_kwargs'][
+                'callbacks']:
+                if isinstance(callback,
+                              ModelCheckpoint) and callback.monitor == 'val_PortfolioReturnMetric':
+                    callback.dirpath = os.path.join(MODEL_OPTIMIZATION_PATH,
+                                                    self._current_hyperparameters[
+                                                        'model_name'],
+                                                    'portfolio_return_checkpoint')
+
+        if self._config['common']['hyperparameters_optimization']['is_pruning']:
+            pruning_callback = [
+                PyTorchLightningPruningCallback(trial, monitor="val_loss")]
+            if 'callbacks' in self._current_hyperparameters[
+                'pl_trainer_kwargs']:
+                self._current_hyperparameters['pl_trainer_kwargs'][
+                    'callbacks'].extend(pruning_callback)
+            else:
+                self._current_hyperparameters['pl_trainer_kwargs'][
+                    'callbacks'] = pruning_callback
+
+        model = MODEL_MAPPING[self._model](
+            **self._current_hyperparameters
+        )
+
+        model.fit(**self._model_args['fit'])
+
+        if model.epochs_trained == 1:
+            music_thread = threading.Thread(
+                target=os.system('afplay super-mario-bros.mp3'))
+            music_thread.start()
+            raise ValueError(
+                'Model only trained for one epoch. Training terminated prematurely.')
+
+        predictions = model.predict(**self._model_args['predict']).median()
+        actuals = self._model_args['fit']["val_series"]
+        val_loss = np.sqrt( mean_squared_error(y_true= actuals, y_pred=predictions))
+
+
+        if model.epochs_trained != 0:
+            music_thread = threading.Thread(
+                target=os.system('afplay super-mario-bros.mp3'))
+            music_thread.start()
+        return val_loss
+
+    def _obtain_hyperparameters_to_optimize(self, trial: optuna.Trial) -> None:
+        for hyperparameter, hyper_attributes in self._model_args[
+            'hyperparameters_with_keys'].items():
+            self._process_hyperparameter(hyperparameter, hyper_attributes,
+                                         trial)
+
+    def _process_hyperparameter(self, hyperparameter, hyper_attributes, trial):
+        suggest_methods = {
+            'suggest_categorical': lambda hyper, trial,
+                                          hyper_values: trial.suggest_categorical(
+                hyper, hyper_values),
+            'suggest_int': lambda hyper, trial, hyper_values: trial.suggest_int(
+                hyper, min(hyper_values), max(hyper_values)),
+            'suggest_float': lambda hyper, trial,
+                                    hyper_values: trial.suggest_float(
+                hyper, min(hyper_values), max(hyper_values)),
+        }
+
+        hyperparameter = tuple(hyperparameter) if isinstance(hyperparameter,
+                                                             list) else (
+        hyperparameter,)
+
+        hyper_values = self._get_hyperparameter_value(hyperparameter)
+
+        if hyperparameter[0] == "work_dir":
+            self._current_hyperparameters["work_dir"] = MODEL_OPTIMIZATION_PATH
+            return
+        if not hyper_values:
+            return
+        if not hyper_attributes:
+            self._set_hyperparameter_value(hyperparameter,
+                                           self._get_hyperparameter_value(
+                                               hyperparameter))
+            return
+
+        if isinstance(hyper_attributes,
+                      dict) and 'trial_suggest' in hyper_attributes:
+            trial_suggest = hyper_attributes['trial_suggest']
+            if trial_suggest in suggest_methods:
+                hyper_values = self._get_hyperparameter_value(hyperparameter)
+
+                hyper_values = self._return_proper_hypervalues_format(
+                    hyper_values)
+                self._set_hyperparameter_value(hyperparameter,
+                                               suggest_methods[trial_suggest](
+                                                   hyperparameter[-1], trial,
+                                                   hyper_values))
+
+            else:
+                raise ValueError(
+                    f'{trial_suggest} is not in the accepted values for hyperparameter {hyperparameter}')
+        elif isinstance(hyper_attributes, dict):
+            for nested_hyperparameter, nested_values in hyper_attributes.items():
+                self._process_hyperparameter(
+                    list(hyperparameter) + [nested_hyperparameter],
+                    nested_values, trial)
+
+    def _get_hyperparameter_value(self, keys):
+        d = copy.deepcopy(self._model_args['hyperparameters'])
+        for key in keys:
+            d = d.get(key)
+            if d is None:
+                return None
+        return d
+
+    def _set_hyperparameter_value(self, keys, value):
+        d = self._current_hyperparameters
+        for key in keys[:-1]:
+            d = d.setdefault(key, {})
+        d[keys[-1]] = value
+
+    def _return_proper_hypervalues_format(self, hyper_values: Union[
+        int, float, list, tuple]) -> list:
+        if not isinstance(hyper_values, (list, tuple)):
+            hyper_values = [hyper_values, hyper_values]
+        return hyper_values

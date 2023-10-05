@@ -54,6 +54,9 @@
             "context_length": {
                 "trial_suggest": "suggest_int"
             },
+             "optimizer": {
+                "trial_suggest": "suggest_categorical"
+            },
             "downsample_frequencies": {
                 "trial_suggest": "suggest_int"
             },
@@ -183,6 +186,9 @@
             },
             "dropout": {
                 "trial_suggest": "suggest_float"
+            },
+            "optimizer": {
+                "trial_suggest": "suggest_categorical"
             },
             "embedding_labels": {},
             "embedding_paddings": {},
