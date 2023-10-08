@@ -1,15 +1,16 @@
 from torchmetrics import Metric
 import torch
 from pytorch_forecasting import TemporalFusionTransformer, DeepAR, NHiTS, RecurrentNetwork
-from mean_reversion.config.config_utils import ConfigManager
+from pytorch_forecasting.metrics.base_metrics import MultiHorizonMetric
+from mean_reversion.config.config_utils import ConfigManager, ModelValueRetriver
 
 class PortfolioReturnMetric(Metric):
     higher_is_better = True
     full_state_update = True
-    def __init__(self, dist_sync_on_step=True, config_manager = ConfigManager()):
+    def __init__(self, dist_sync_on_step=True, values_retriever = ModelValueRetriver(), config_manager = ConfigManager()):
         super().__init__(dist_sync_on_step=dist_sync_on_step)
 
-        self._lower_index, self._upper_index = config_manager.get_confidence_indexes()
+        self._lower_index, self._upper_index = values_retriever.confidence_indexes
         self._config =config_manager.config
         self.add_state("portfolio_value", default=torch.tensor(0.0), dist_reduce_fx="sum")
 

@@ -54,9 +54,6 @@
             "context_length": {
                 "trial_suggest": "suggest_int"
             },
-             "optimizer": {
-                "trial_suggest": "suggest_categorical"
-            },
             "downsample_frequencies": {
                 "trial_suggest": "suggest_int"
             },
@@ -102,6 +99,9 @@
                 "trial_suggest": "suggest_int"
             },
             "naive_level": {
+                "trial_suggest": "suggest_categorical"
+            },
+            "optimizer": {
                 "trial_suggest": "suggest_categorical"
             },
             "output_size": {
@@ -178,27 +178,26 @@
     "TemporalFusionTransformer": {
         "hyperparameters": {
             "attention_head_size": {
-                "trial_suggest": "suggest_int"
+                "trial_suggest": "suggest_categorical"
             },
             "categorical_groups": {},
+
             "causal_attention": {
                 "trial_suggest": "suggest_categorical"
             },
             "dropout": {
                 "trial_suggest": "suggest_float"
             },
-            "optimizer": {
-                "trial_suggest": "suggest_categorical"
-            },
             "embedding_labels": {},
             "embedding_paddings": {},
             "embedding_sizes": {},
+            "output_size" : {},
             "hidden_continuous_size": {
-                "trial_suggest": "suggest_int"
+                "trial_suggest": "suggest_categorical"
             },
             "hidden_continuous_sizes": {},
             "hidden_size": {
-                "trial_suggest": "suggest_int"
+                "trial_suggest": "suggest_categorical"
             },
             "learning_rate": {
                 "trial_suggest": "suggest_float"
@@ -217,12 +216,12 @@
                 "trial_suggest": "suggest_categorical"
             },
             "lstm_layers": {
-                "trial_suggest": "suggest_int"
-            },
-            "max_encoder_length": {
-                "trial_suggest": "suggest_int"
+                "trial_suggest": "suggest_categorical"
             },
             "monotone_constaints": {},
+            "optimizer": {
+                "trial_suggest": "suggest_categorical"
+            },
             "output_size": {
                 "trial_suggest": "suggest_int"
             },
@@ -247,25 +246,25 @@
     },
     "common": {
         "batch_size": {
-            "trial_suggest": "suggest_int"
+            "trial_suggest": "suggest_categorical"
         },
-        "confidence_level" : {
-            "trial_suggest": "suggest_float"
+        "confidence_level": {
+            "trial_suggest": "suggest_categorical"
         },
         "epochs": {
             "trial_suggest": "suggest_int"
         },
         "gradient_clip_val": {
-            "trial_suggest": "suggest_float"
+            "trial_suggest": "suggest_categorical"
+        },
+        "likelihood": {
         },
         "max_encoder_length": {
             "trial_suggest": "suggest_int"
         },
         "max_prediction_length": {
-            "trial_suggest": "suggest_int"
+            "trial_suggest": "suggest_categorical"
         },
-        "random_state": {
-            "trial_suggest": "suggest_int"
-        }
+        "random_state": {}
     }
 }

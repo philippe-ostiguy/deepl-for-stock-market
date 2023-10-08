@@ -1,22 +1,22 @@
 {
     "predict": {
-        "rmse": 0.010299927453332402,
-        "f1_score": 0.4926178187553355,
-        "naive_forecast_rmse": 0.00933740422646696,
-        "rmse_vs_naive": 1.1030825273834841,
-        "return": 0.336233069888086,
         "actual_return": 0.0949486990171915,
+        "f1_score": 0.4926178187553355,
         "max_possible_return": 44.01148196090874,
-         "return_on_risk" : 0
+        "naive_forecast_rmse": 0.00933740422646696,
+        "return": 0.336233069888086,
+        "return_on_risk": 0,
+        "rmse": 0.010299927453332402,
+        "rmse_vs_naive": 1.1030825273834841
     },
     "test": {
-        "rmse": 0.011605314099318193,
-        "f1_score": 0.5141074775146213,
-        "naive_forecast_rmse": 0.00941086938465508,
-        "rmse_vs_naive": 1.2331819330359926,
-        "return": 0.24326422573477413,
         "actual_return": 0.19218992405873436,
+        "f1_score": 0.5141074775146213,
         "max_possible_return": 81.02496807176618,
-        "return_on_risk" : 0
+        "naive_forecast_rmse": 0.00941086938465508,
+        "return": 0.24326422573477413,
+        "return_on_risk": 0,
+        "rmse": 0.011605314099318193,
+        "rmse_vs_naive": 1.2331819330359926
     }
 }

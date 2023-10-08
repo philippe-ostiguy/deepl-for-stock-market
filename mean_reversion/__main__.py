@@ -31,6 +31,8 @@ from mean_reversion.data_processor import (
 from mean_reversion.config.config_utils import InitProject, ConfigManager
 from mean_reversion.factory import DataSourceFactory
 from mean_reversion.models.models import ModelBuilder, HyperpametersOptimizer
+import torch
+torch.manual_seed(42)
 
 if __name__ == "__main__":
 
@@ -53,8 +55,8 @@ if __name__ == "__main__":
             config_manager, data_processor_helper
         ).run()
     DataForModelSelector(config_manager).run()
-    # if config_manager.config['common']['hyperparameters_optimization']['is_optimizing']:
-    #       HyperpametersOptimizer(config_manager).run()
+    if config_manager.config['common']['hyperparameters_optimization']['is_optimizing']:
+           HyperpametersOptimizer(config_manager).run()
 
-    ModelBuilder(config_manager).run()
+    # ModelBuilder(config_manager).run()
 

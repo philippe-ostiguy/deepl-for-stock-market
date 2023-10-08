@@ -6,7 +6,7 @@ from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
 from tensorboard.backend.event_processing import event_accumulator
 from pytorch_forecasting import TimeSeriesDataSet
 from pytorch_forecasting.data import GroupNormalizer
-from typing import Callable, Union
+from typing import Callable, Union, Optional
 import matplotlib.pyplot as plt
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
 import os
@@ -15,7 +15,7 @@ import numpy as np
 from sklearn.metrics import mean_squared_error, f1_score
 import threading
 from mean_reversion.models.model_customizer import CustomNHiTS,CustomDeepAR,CustomTemporalFusionTransformer,CustomlRecurrentNetwork
-from mean_reversion.config.config_utils import ConfigManager
+from mean_reversion.config.config_utils import ConfigManager, ModelValueRetriver
 from mean_reversion.utils import clear_directory_content, read_json, save_json
 import pytz
 import datetime
@@ -23,10 +23,10 @@ import re
 import subprocess
 import glob
 import copy
-from optuna.integration import PyTorchLightningPruningCallback
+import torch
 import optuna
 import pickle
-
+from abc import ABC, abstractmethod
 
 CUSTOM_MODEL = {
     "NHiTS": CustomNHiTS,
@@ -36,50 +36,34 @@ CUSTOM_MODEL = {
 }
 
 
-class BaseModelBuilder:
+class BaseModelBuilder(ABC):
     def __init__(
         self,
         config_manager: ConfigManager = ConfigManager(),
+        values_retriver = ModelValueRetriver()
     ):
-        self._config_manager = config_manager
-        self._config = self._config_manager.config
-
-
-class ModelBuilder(BaseModelBuilder):
-    def __init__(
-        self,
-        config_manager: ConfigManager,
-    ):
-        super(ModelBuilder, self).__init__()
         self._config_manager = config_manager
         self._config = self._config_manager.config
         self._params = {}
-        self._assign_params()
-
         self._datasets = ['train', 'predict', 'test']
-        self._lightning_logs_dir = 'lightning_logs'
-        self._lower_index, self._upper_index = self._config_manager.get_confidence_indexes()
+        self._model_dir = ''
+        self._lightning_logs_dir = ''
+        self._logger = None
+        self._model_name = ''
+        self._values_retriever = values_retriver
 
-    def run(self):
-        self._obtain_data()
-        for model in self._config["hyperparameters"]["models"]:
 
-            self._model_name = model
-            self._obtain_dataloader()
-            self._model_dir = f'models/{self._model_name}'
-            self._clean_directory()
-            self._train_model()
-            self._obtain_best_model()
-            self._coordinate_evaluation()
-            self._save_metrics_from_tensorboardflow()
-            self._coordinate_interpretions()
-            self._save_run_information()
-            self._coordinate_select_best_model()
-
-        music_thread = threading.Thread(
-            target=os.system('afplay super-mario-bros.mp3'))
-        music_thread.start()
-        print('Program finished successfully')
+    def _assign_params(self, hyperparameters_phase : Optional[str] = 'hyperparameters'):
+        params = {}
+        model_config = read_json(
+            "resources/configs/models_args.json"
+        )["common"]
+        for item in model_config.keys():
+            if item in self._config[hyperparameters_phase]["common"]:
+                params[item] = self._config[hyperparameters_phase]["common"][item]
+            else :
+                params[item] = None
+        return params
 
     def _clean_directory(self):
         clear_directory_content(self._model_dir)
@@ -87,15 +71,15 @@ class ModelBuilder(BaseModelBuilder):
         self._cleanup_logs(self._lightning_logs_dir)
         self._cleanup_logs(f'{self._lightning_logs_dir}/{self._model_name}')
 
-    def _assign_params(self):
-        model_config = read_json(
-            "resources/configs/models_args.json"
-        )["common"]
-        for item in model_config.keys():
-            if item in self._config["hyperparameters"]["common"]:
-                self._params[item] = self._config["hyperparameters"]["common"][item]
-            else :
-                self._params[item] = None
+    @staticmethod
+    def _cleanup_logs(base_dir, keep=5):
+        if not os.path.exists(base_dir):
+            return
+        versions = [d for d in Path(base_dir).iterdir() if
+                    d.is_dir() and 'version_' in d.name]
+        sorted_versions = sorted(versions, key=os.path.getctime, reverse=True)
+        for version in sorted_versions[keep:]:
+            shutil.rmtree(version)
 
     def _obtain_data(self):
 
@@ -123,7 +107,7 @@ class ModelBuilder(BaseModelBuilder):
             output = pd.read_csv(f"resources/input/model_data/output_{dataset}.csv")
             setattr(self, f'_output_{dataset}', output)
 
-    def _obtain_dataloader(self):
+    def _assign_data_models(self):
         for dataset_type in self._datasets:
             input_past = getattr(self, f'_input_past_{dataset_type}')
             input_future = getattr(self, f'_input_future_{dataset_type}',
@@ -137,36 +121,37 @@ class ModelBuilder(BaseModelBuilder):
             data['group'] = 'group_1'
             setattr(self, f'_{dataset_type}_data', data)
 
+    def _obtain_dataloader(self):
 
         self._continuous_cols = [col for col in self._input_past_train.columns if col not in ["time"]]
         self._continuous_cols.append("target")
-        add_encoder_length = True
-        add_relative_time_idx = True
-        add_target_scales = True
-        static_categoricals = ["group"]
+        self._add_encoder_length = True
+        self._add_relative_time_idx = True
+        self._add_target_scales = True
+        self._static_categoricals = ["group"]
 
         if "RecurrentNetwork" in self._model_name or 'DeepAR' in self._model_name:
             self._continuous_cols = ["target"]
         if "NHiTS" in self._model_name :
             self._categorical_cols = []
-            add_relative_time_idx = False
-            add_encoder_length = False
-            add_target_scales = False
-            static_categoricals = []
+            self._add_relative_time_idx = False
+            self._add_encoder_length = False
+            self._add_target_scales = False
+            self._static_categoricals = []
 
         self._training_dataset = TimeSeriesDataSet(
             self._train_data,
             time_idx="time",
             target="target",
             group_ids=["group"],
-            static_categoricals=static_categoricals,
+            static_categoricals=self._static_categoricals,
             max_encoder_length=self._params["max_encoder_length"],
             max_prediction_length=self._params["max_prediction_length"],
             time_varying_known_categoricals=self._categorical_cols,
             time_varying_unknown_reals=self._continuous_cols,
-            add_encoder_length=add_encoder_length,
-            add_relative_time_idx= add_relative_time_idx,
-            add_target_scales=add_target_scales,
+            add_encoder_length=self._add_encoder_length,
+            add_relative_time_idx= self._add_relative_time_idx,
+            add_target_scales=self._add_target_scales,
             target_normalizer=GroupNormalizer(
                 groups=["group"]
             )
@@ -175,46 +160,86 @@ class ModelBuilder(BaseModelBuilder):
 
         self._train_dataloader = self._training_dataset.to_dataloader(train=True, batch_size=self._params['batch_size'])
         self._predict_dataset = TimeSeriesDataSet.from_dataset(self._training_dataset, self._predict_data, predict=False, stop_randomization=True)
-        self._predict_dataloader = self._predict_dataset.to_dataloader(train=False, batch_size=self._params['batch_size']*1000)
+        self._predict_dataloader = self._predict_dataset.to_dataloader(train=False, batch_size=self._params['batch_size']*5000)
         self._test_dataset = TimeSeriesDataSet.from_dataset(self._training_dataset, self._test_data, predict=False, stop_randomization=True)
-        self._test_dataloader = self._test_dataset.to_dataloader(train=False, batch_size=self._params['batch_size']*1000)
+        self._test_dataloader = self._test_dataset.to_dataloader(train=False, batch_size=self._params['batch_size']*5000)
 
-    def _train_model(self):
+    def _train_model(self, hyperparameters : dict, callback_phase: Optional[str] = 'callbacks'):
         pl.seed_everything(self._params['random_state'])
         model_to_train = CUSTOM_MODEL[self._model_name]
 
         self._model = model_to_train.from_dataset(
             dataset=self._training_dataset,
-            **self._config_manager.models_hyperparameters[self._model_name],
+            **hyperparameters[self._model_name],
         )
 
-
         callbacks_list = []
-        if 'callbacks' in self._config['specific_config'][self._model_name] and self._config['specific_config'][self._model_name]['callbacks']:
-           for callback in self._config['specific_config'][self._model_name]['callbacks']:
-               if isinstance(callback,
-                             ModelCheckpoint):
-                    self._model_checkpoint = callback
+        if getattr(self._config_manager, callback_phase, None):
+            for callback in getattr(self._config_manager, callback_phase)[self._model_name]['callbacks']:
+                if isinstance(callback,
+                              ModelCheckpoint):
+                    self._model_checkpoint = copy.deepcopy(callback)
                     callbacks_list.append(callback)
-               if isinstance(callback,
-                             EarlyStopping):
-                   callbacks_list.append(callback)
+                if isinstance(callback,
+                              EarlyStopping):
+                    callbacks_list.append(copy.deepcopy(callback))
 
         if not callbacks_list:
             callbacks_list = None
 
-        self._logger = TensorBoardLogger(self._lightning_logs_dir, name= self._model_name)
+        if self._lightning_logs_dir:
+            self._logger = TensorBoardLogger(self._lightning_logs_dir,
+                                             name=self._model_name)
         self._trainer = pl.Trainer(
-                                   max_epochs=self._params["epochs"],
-                             callbacks=callbacks_list,
-                             logger=self._logger,
-                             gradient_clip_val=self._params["gradient_clip_val"],
-                             enable_model_summary=True,
-                             )
+            max_epochs=self._params["epochs"],
+            callbacks=callbacks_list,
+            logger=self._logger,
+            gradient_clip_val=self._params["gradient_clip_val"],
+            enable_model_summary=True,
+        )
 
         self._trainer.fit(self._model,
-                    train_dataloaders=self._train_dataloader,
-                    val_dataloaders=self._predict_dataloader)
+                          train_dataloaders=self._train_dataloader,
+                          val_dataloaders=self._predict_dataloader)
+
+
+class ModelBuilder(BaseModelBuilder):
+    def __init__(
+        self,
+        config_manager: ConfigManager,
+    ):
+        super().__init__()
+        self._config_manager = config_manager
+        self._config = self._config_manager.config
+        self._params = self._assign_params()
+
+        self._lightning_logs_dir = 'lightning_logs'
+        self._lower_index, self._upper_index = self._values_retriever.confidence_indexes
+
+
+    def run(self):
+        self._obtain_data()
+        for model in self._config["hyperparameters"]["models"]:
+
+            self._model_name = model
+            self._assign_data_models()
+            self._obtain_dataloader()
+            self._model_dir = f'models/{self._model_name}'
+            self._clean_directory()
+            self._train_model(self._config_manager.hyperparameters)
+            self._obtain_best_model()
+            self._coordinate_evaluation()
+            self._save_metrics_from_tensorboardflow()
+            self._coordinate_interpretions()
+            self._save_run_information()
+            self._coordinate_select_best_model()
+
+        music_thread = threading.Thread(
+            target=os.system('afplay super-mario-bros.mp3'))
+        music_thread.start()
+        print('Program finished successfully')
+
+
 
     def _obtain_best_model(self):
         best_model_path = self._model_checkpoint.best_model_path
@@ -547,14 +572,6 @@ class ModelBuilder(BaseModelBuilder):
             self._save_metrics(dataset_type)
             self._plot_predictions(dataset_type)
 
-    @staticmethod
-    def _cleanup_logs(base_dir, keep=5):
-        versions = [d for d in Path(base_dir).iterdir() if
-                    d.is_dir() and 'version_' in d.name]
-        sorted_versions = sorted(versions, key=os.path.getctime, reverse=True)
-        for version in sorted_versions[keep:]:
-            shutil.rmtree(version)
-
     def _save_metrics_from_tensorboardflow(self):
         metrics_dict = {}
 
@@ -593,7 +610,7 @@ class ModelBuilder(BaseModelBuilder):
         now_in_est = datetime.datetime.now(est)
         date_str = now_in_est.strftime("%Y-%m-%d %H:%M")
         data['last_run_time'] = date_str
-        data['last_epoch_trained'] = self._trainer.current_epoch
+        data['last_epoch_trained'] = self._trainer.current_epoch + 1
         save_json(
             os.path.join(
                 self._model_dir,
@@ -603,13 +620,19 @@ class ModelBuilder(BaseModelBuilder):
         )
 
 
-class HyperpametersOptimizer:
+class HyperpametersOptimizer(BaseModelBuilder):
     def __init__(
             self,
-            config_manager: ConfigManager,
+            config_manager: ConfigManager
+
     ):
+        super().__init__()
         self._config_manager = config_manager
         self._config = config_manager.config
+        #self._lightning_logs_dir = 'lightning_logs/model_optimization'
+        self._params_to_optimized = self._assign_params(hyperparameters_phase='hyperparameters_optimization')
+
+        self._model_suggested_type = {}
 
     def run(self):
         n_trials = self._config['common']['hyperparameters_optimization'][
@@ -617,140 +640,102 @@ class HyperpametersOptimizer:
         best_hyper_params = {}
 
         self._obtain_data()
-        for model in self._config["hyperparameters"]["models"]:
-            self._model_name = model
-            self._obtain_dataloader()
-            self._model_dir = f'models/{self._model_name}'
-            self._clean_directory()
-            self._train_model()
-            self._obtain_best_model()
-            self._coordinate_evaluation()
-            self._save_metrics_from_tensorboardflow()
-            self._coordinate_interpretions()
-            self._save_run_information()
-            self._coordinate_select_best_model()
-
+        self._current_hyperparameters = {}
         for model in self._config["hyperparameters_optimization"]["models"]:
-            self._current_hyperparameters = {}
-            best_hyper_params[model] = {}
-            self._model_args_assigner._model_name = self._model = model
-            self._model_args_assigner._hyperparameters_type = 'hyperparameters_optimization'
-            self._model_args_assigner._run_all()
-            self._model_args = self._model_args_assigner.model_args
+            self._current_hyperparameters['model'] = {}
+            self._model_suggested_type = \
+                self._config_manager.get_model_suggest_type(model)
+            self._model_name = model
+            self._assign_data_models()
+            self._model_dir = f'models/hyperparameters_optimization/{self._model_name}'
+            self._clean_directory()
             if self._config['common']['hyperparameters_optimization'][
                 'is_pruning']:
 
-                pruner = optuna.pruners.MedianPruner(n_startup_trials=5,
-                                                     n_warmup_steps=5,
-                                                     interval_steps=5)
+                pruner = optuna.pruners.MedianPruner(n_startup_trials=3,
+                                                     n_warmup_steps=4,
+                                                     interval_steps=4)
             else:
                 pruner = None
-
-            study = optuna.create_study(direction='minimize', pruner=pruner)
+            sampler = optuna.samplers.TPESampler(seed=42)
+            study = optuna.create_study(direction='maximize', pruner = pruner,sampler=sampler)
             study.optimize(self._objective, n_trials=n_trials,
                            show_progress_bar=True)
 
-            best_hyper_params[model] = self._update_nested_dict(
-                self._current_hyperparameters, study.best_params,
-                best_hyper_params[model])
-            best_hyper_params[model]["work_dir"] = MODELS_PATH
-            if 'lr_scheduler_kwargs' in best_hyper_params[
-                model] and self._model_args_assigner.get_lr_scheduler_kwargs():
-                best_hyper_params[model][
-                    'lr_scheduler_kwargs'] = self._model_args_assigner.get_lr_scheduler_kwargs()
-            if 'lr_scheduler_cls' in best_hyper_params[
-                model] and self._model_args_assigner.get_lr_scheduler_cls():
-                best_hyper_params[model][
-                    'lr_scheduler_cls'] = self._model_args_assigner.get_lr_scheduler_cls()
-            if 'pl_trainer_kwargs' in best_hyper_params[
-                model] and self._model_args_assigner.get_pl_trainer_kwargs():
-                best_hyper_params[model][
-                    'pl_trainer_kwargs'] = self._model_args_assigner.get_pl_trainer_kwargs()
-            if 'torch_metrics' in best_hyper_params[
-                model] and self._model_args_assigner.get_torch_metrics():
-                best_hyper_params[model][
-                    'torch_metrics'] = self._model_args_assigner.get_torch_metrics()
-
-            if 'loss_fn' in best_hyper_params[
-                model] and self._model_args_assigner.get_loss_fn():
-                best_hyper_params[model][
-                    'loss_fn'] = self._model_args_assigner.get_loss_fn()
-
-            with open(
-                    f'{MODEL_OPTIMIZATION_PATH}/{model}/best_hyper_params.pkl',
-                    'wb') as file:
-                pickle.dump(best_hyper_params[model], file)
-
-        self._config_manager.models_hyperparameters = best_hyper_params
-
-    def _update_nested_dict(self, base_dict, updates_dict, target_dict):
-        for k, v in base_dict.items():
-            if k in updates_dict and isinstance(v, dict) and isinstance(
-                    updates_dict[k], dict):
-                target_dict[k] = self._update_nested_dict(v, updates_dict.get(k,
-                                                                              {}),
-                                                          target_dict.get(k,
-                                                                          {}))
-            else:
-                target_dict[k] = updates_dict.get(k, v)
-        return target_dict
+            with open(f"{self._model_dir}/best_study.pkl", "wb") as fout:
+                pickle.dump(study, fout)
+            print(study.best_params)
+            self._values_retriever.confidence_indexes = ''
 
     def _objective(self, trial: optuna.Trial):
+        self._hyper_possible_values = self._config_manager.hyperparameters_to_optimize[self._model_name]
+        self._current_suggested_type = self._model_suggested_type
+        self._current_hyperparameters[self._model_name] = self._assign_hyperparameters(trial)
 
-        self._obtain_hyperparameters_to_optimize(trial)
-        if 'callbacks' in self._current_hyperparameters[
-            'pl_trainer_kwargs']:
-            for callback in self._current_hyperparameters['pl_trainer_kwargs'][
-                'callbacks']:
-                if isinstance(callback,
-                              ModelCheckpoint) and callback.monitor == 'val_PortfolioReturnMetric':
-                    callback.dirpath = os.path.join(MODEL_OPTIMIZATION_PATH,
-                                                    self._current_hyperparameters[
-                                                        'model_name'],
-                                                    'portfolio_return_checkpoint')
+        self._hyper_possible_values = self._params_to_optimized
+        self._current_suggested_type = {**self._model_suggested_type,**self._config_manager.get_model_suggest_type('common', model_argument_type='')}
+        self._params = self._assign_hyperparameters(trial)
 
-        if self._config['common']['hyperparameters_optimization']['is_pruning']:
-            pruning_callback = [
-                PyTorchLightningPruningCallback(trial, monitor="val_loss")]
-            if 'callbacks' in self._current_hyperparameters[
-                'pl_trainer_kwargs']:
-                self._current_hyperparameters['pl_trainer_kwargs'][
-                    'callbacks'].extend(pruning_callback)
-            else:
-                self._current_hyperparameters['pl_trainer_kwargs'][
-                    'callbacks'] = pruning_callback
+        self._adjust_hyperparameters()
+        self._obtain_dataloader()
+        self._train_model(self._current_hyperparameters,callback_phase='callbacks_for_optimization')
 
-        model = MODEL_MAPPING[self._model](
-            **self._current_hyperparameters
-        )
-
-        model.fit(**self._model_args['fit'])
-
-        if model.epochs_trained == 1:
+        if self._model.current_epoch == 0:
             music_thread = threading.Thread(
                 target=os.system('afplay super-mario-bros.mp3'))
             music_thread.start()
             raise ValueError(
                 'Model only trained for one epoch. Training terminated prematurely.')
+        checkpoint = torch.load(
+            f"{self._model_dir}/best_model.ckpt")
 
-        predictions = model.predict(**self._model_args['predict']).median()
-        actuals = self._model_args['fit']["val_series"]
-        val_loss = np.sqrt( mean_squared_error(y_true= actuals, y_pred=predictions))
+        model_checkpoint_key = next(
+            key for key in checkpoint["callbacks"] if "ModelCheckpoint" in key)
+
+        best_value = checkpoint["callbacks"][model_checkpoint_key][
+            'best_model_score'].item()
+        print(f'current best return : {best_value}')
+
+        return best_value
+
+    @staticmethod
+    def _find_closest_value(lst, K, exclude):
+        return min((abs(val - K), val) for val in lst if val not in exclude)[1]
 
 
-        if model.epochs_trained != 0:
-            music_thread = threading.Thread(
-                target=os.system('afplay super-mario-bros.mp3'))
-            music_thread.start()
-        return val_loss
+    def _adjust_hyperparameters(self):
+        if 'likelihood' in self._params and 'confidence_level' in self._params and\
+                self._params['confidence_level'] != 0.5 and self._params['confidence_level'] \
+                not in self._params['likelihood']:
+            to_remove_1 = self._find_closest_value(self._params['likelihood'], self._params['confidence_level'],
+                                  exclude=[0.5])
+            self._params['likelihood'].remove(to_remove_1)
 
-    def _obtain_hyperparameters_to_optimize(self, trial: optuna.Trial) -> None:
-        for hyperparameter, hyper_attributes in self._model_args[
-            'hyperparameters_with_keys'].items():
-            self._process_hyperparameter(hyperparameter, hyper_attributes,
+            to_remove_2 = self._find_closest_value(self._params['likelihood'], 1 - self._params['confidence_level'],
+                                  exclude=[0.5])
+            self._params['likelihood'].remove(to_remove_2)
+            self._params['likelihood'].append(self._params['confidence_level'])
+            self._params['likelihood'].append(1 - self._params['confidence_level'])
+
+
+
+        self._params['likelihood'].sort()
+
+        self._current_hyperparameters[self._model_name]['loss'] = ConfigManager.assign_loss_fct(self._current_hyperparameters[self._model_name],self._params)['loss']
+        index_high_quantile = self._params['likelihood'].index(self._params['confidence_level'])
+        index_low_quantile = self._params['likelihood'].index(1 - self._params['confidence_level'])
+        self._values_retriever.confidence_indexes = (index_low_quantile,index_high_quantile)
+
+    def _assign_hyperparameters(self, trial: optuna.Trial) -> dict:
+        hyperparameters_value = {}
+        for hyperparameter, hyper_properties in self._current_suggested_type.items():
+            current_value = self._process_hyperparameter(hyperparameter, hyper_properties,
                                          trial)
+            if current_value:
+                hyperparameters_value[hyperparameter] = current_value
+        return hyperparameters_value
 
-    def _process_hyperparameter(self, hyperparameter, hyper_attributes, trial):
+    def _process_hyperparameter(self, hyperparameter, hyper_properties, trial):
         suggest_methods = {
             'suggest_categorical': lambda hyper, trial,
                                           hyper_values: trial.suggest_categorical(
@@ -762,61 +747,24 @@ class HyperpametersOptimizer:
                 hyper, min(hyper_values), max(hyper_values)),
         }
 
-        hyperparameter = tuple(hyperparameter) if isinstance(hyperparameter,
-                                                             list) else (
-        hyperparameter,)
 
         hyper_values = self._get_hyperparameter_value(hyperparameter)
 
-        if hyperparameter[0] == "work_dir":
-            self._current_hyperparameters["work_dir"] = MODEL_OPTIMIZATION_PATH
-            return
         if not hyper_values:
-            return
-        if not hyper_attributes:
-            self._set_hyperparameter_value(hyperparameter,
-                                           self._get_hyperparameter_value(
-                                               hyperparameter))
-            return
+            return None
 
-        if isinstance(hyper_attributes,
-                      dict) and 'trial_suggest' in hyper_attributes:
-            trial_suggest = hyper_attributes['trial_suggest']
-            if trial_suggest in suggest_methods:
-                hyper_values = self._get_hyperparameter_value(hyperparameter)
+        if not isinstance(hyper_values, list):
+            return hyper_values
 
-                hyper_values = self._return_proper_hypervalues_format(
-                    hyper_values)
-                self._set_hyperparameter_value(hyperparameter,
-                                               suggest_methods[trial_suggest](
-                                                   hyperparameter[-1], trial,
-                                                   hyper_values))
+        if not 'trial_suggest' in hyper_properties:
+            return hyper_values
 
-            else:
-                raise ValueError(
-                    f'{trial_suggest} is not in the accepted values for hyperparameter {hyperparameter}')
-        elif isinstance(hyper_attributes, dict):
-            for nested_hyperparameter, nested_values in hyper_attributes.items():
-                self._process_hyperparameter(
-                    list(hyperparameter) + [nested_hyperparameter],
-                    nested_values, trial)
+        trial_suggest = hyper_properties['trial_suggest']
+        return suggest_methods[trial_suggest](hyperparameter, trial,hyper_values)
 
-    def _get_hyperparameter_value(self, keys):
-        d = copy.deepcopy(self._model_args['hyperparameters'])
-        for key in keys:
-            d = d.get(key)
-            if d is None:
-                return None
-        return d
 
-    def _set_hyperparameter_value(self, keys, value):
-        d = self._current_hyperparameters
-        for key in keys[:-1]:
-            d = d.setdefault(key, {})
-        d[keys[-1]] = value
-
-    def _return_proper_hypervalues_format(self, hyper_values: Union[
-        int, float, list, tuple]) -> list:
-        if not isinstance(hyper_values, (list, tuple)):
-            hyper_values = [hyper_values, hyper_values]
-        return hyper_values
+    def _get_hyperparameter_value(self, hyperparameter):
+        hyperparameters_dict = copy.deepcopy(self._hyper_possible_values)
+        if hyperparameter in hyperparameters_dict:
+            return hyperparameters_dict[hyperparameter]
+        return None

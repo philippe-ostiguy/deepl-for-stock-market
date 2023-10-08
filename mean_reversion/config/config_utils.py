@@ -39,8 +39,8 @@ class ConfigManager:
         self._models_support = read_json(
             "resources/configs/models_support.json"
         )
-        self.models_hyperparameters = {}
-        self._models_with_hyperparameters_to_optimize = {}
+        self.hyperparameters = {}
+        self.hyperparameters_to_optimize = {}
         self._assign_hyperparameters_to_models()
         self._validate_num_forecasts()
         self._validate_model_metrics()
@@ -54,6 +54,10 @@ class ConfigManager:
 
     def _assign_common_config(self):
         common_config = self._config["hyperparameters"]["common"]
+        if not "gradient_clip_val" in common_config:
+            self._config["hyperparameters"]["common"]["gradient_clip_val"] = None
+
+        common_config = self._config["hyperparameters_optimization"]["common"]
         if not "gradient_clip_val" in common_config:
             self._config["hyperparameters"]["common"]["gradient_clip_val"] = None
 
@@ -77,19 +81,19 @@ class ConfigManager:
 
     def get_loss(self, model : str) -> Union[dict,None]:
         if self._check_if_argument_exist(model,'loss'):
-            return deepcopy(self.models_hyperparameters[model]['loss'])
+            return deepcopy(self.hyperparameters[model]['loss'])
         return None
 
     def _check_if_argument_exist(self, model : str, argument_to_check : str) -> bool:
-        if self.models_hyperparameters and argument_to_check in self.models_hyperparameters[model]:
+        if self.hyperparameters and argument_to_check in self.hyperparameters[model]:
             return True
         return False
 
-    def _assign_callbacks(self, model):
-        pl_trainer_kwargs = deepcopy(self._config["hyperparameters"]["common"]["pl_trainer_kwargs"])
-        callback_config = deepcopy(self._config["hyperparameters"]["common"]["callbacks"])
+    def _assign_callbacks(self, model, hyperparameters_phase : Optional[str] = "hyperparameters" ):
+        pl_trainer_kwargs = deepcopy(self._config[hyperparameters_phase]["common"]["pl_trainer_kwargs"])
+        callback_config = deepcopy(self._config[hyperparameters_phase]["common"]["callbacks"])
         if not pl_trainer_kwargs:
-            del self._config["hyperparameters"]["common"]["pl_trainer_kwargs"]
+            del self._config[ hyperparameters_phase]["common"]["pl_trainer_kwargs"]
             return
 
         for pl_trainer_argument, pl_trainer_value in pl_trainer_kwargs.items():
@@ -113,10 +117,11 @@ class ConfigManager:
                             if callback_args.get(
                                     'monitor') == 'val_PortfolioReturnMetric':
                                 callback_args['mode'] = 'max'
-                            if callback_args.get(
-                                    'monitor') == 'val_PortfolioReturnMetric':
-                                callback_args[
-                                    'dirpath'] = f'{MODELS_PATH}/{model}'
+                                if hyperparameters_phase == "hyperparameters" :
+                                    callback_args['dirpath'] = f'{MODELS_PATH}/{model}'
+                                else :
+                                    callback_args['dirpath'] = f'{MODELS_PATH}/hyperparameters_optimization/{model}'
+
 
                         callback_instance = PYTORCH_CALLBACKS[callback_name](
                             **callback_args)
@@ -163,10 +168,13 @@ class ConfigManager:
                 f"increase the date range and/or decrease train_test_split"
             )
 
-    def get_model_args(self, model_name: str, model_argument_type: str,
+    def get_model_suggest_type(self, model_name: str, model_argument_type: str = 'hyperparameters',
                        keys_only: bool = False) -> dict:
-        model_args = self._models_with_hyper.get(model_name)[
-            model_argument_type]
+        if model_argument_type :
+            model_args = self._models_with_hyper.get(model_name)[
+                model_argument_type]
+        else :
+            model_args = self._models_with_hyper.get(model_name)
         return model_args.keys() if keys_only else model_args
 
     def _assign_inputs(self):
@@ -209,20 +217,23 @@ class ConfigManager:
         ] = f"{TRANSFORMATION_PATH}/transformations_for_scaler.pickle"
 
     def _assign_hyperparameters_to_models(self):
-
+        self.callbacks = {}
+        self.callbacks_for_optimization = {}
         for model in self._models_with_hyper:
             if model == 'common':
                 continue
-            self._config['specific_config'][model] = {}
-            self._config['specific_config'][model] = deepcopy(self._assign_callbacks(model))
+
+            self.callbacks[model] = deepcopy(self._assign_callbacks(model))
             model_args = self._assign_model_hyperparameters(model)
-            self.models_hyperparameters[
+            self.hyperparameters[
                 model] = model_args
 
             if self._config["common"]["hyperparameters_optimization"]["is_optimizing"]:
-                self._models_with_hyperparameters_to_optimize[
+                self.hyperparameters_to_optimize[
                     model] = self._assign_optimization_hyperparameters(model,
                                                                        model_args)
+                self.callbacks_for_optimization[model] = deepcopy(self._assign_callbacks(model,"hyperparameters_optimization"))
+
 
     def _assign_model_hyperparameters(self, model):
         common_config = deepcopy(self._config["hyperparameters"]["common"])
@@ -233,23 +244,30 @@ class ConfigManager:
         model_args = {}
         model_args.update(
             self._extract_config_values(model_keys.keys(), model_specific))
-        likelihood=  []
+        return self.assign_loss_fct(model_args,common_config)
 
-        if "likelihood" in common_config and isinstance(common_config["likelihood"],
-                                                     list):
+    @staticmethod
+    def assign_loss_fct(model_args, common_config):
+        likelihood = []
+
+        if "likelihood" in common_config and isinstance(
+                common_config["likelihood"],
+                list):
             likelihood = common_config["likelihood"]
-
 
         if "loss" in model_args and ('Quantile' in model_args["loss"]):
             if likelihood:
-                model_args['loss'] = LOSS[model_args['loss']](quantiles = likelihood)
+                model_args['loss'] = LOSS[model_args['loss']](
+                    quantiles=likelihood)
 
             else:
                 model_args['loss'] = LOSS[model_args['loss']]()
 
-            if "confidence_level" in common_config and common_config['confidence_level'] not in likelihood:
-                raise ValueError(f'Confidence level {common_config["confidence_level"]} must be a value '
-                                 f'in likelihood {likelihood}')
+            if "confidence_level" in common_config and common_config[
+                'confidence_level'] not in likelihood:
+                raise ValueError(
+                    f'Confidence level {common_config["confidence_level"]} must be a value '
+                    f'in likelihood {likelihood}')
 
         elif "loss" in model_args:
             model_args['loss'] = LOSS[model_args['loss']]()
@@ -260,12 +278,9 @@ class ConfigManager:
         return {k: config[k] for k in keys if k in config}
 
     def _assign_optimization_hyperparameters(self, model : str, default_args : dict) -> dict:
-        common_optimization_config = \
-        self._config["hyperparameters_optimization"]["common"]
-        model_specific_optimization_config = \
-        self._config["hyperparameters_optimization"]["models"].get(model, {})
+        common_optimization_config =  self._config["hyperparameters_optimization"]["common"]
+        model_specific_optimization_config =  self._config["hyperparameters_optimization"]["models"].get(model, {})
         model_keys = self._models_with_hyper[model]["hyperparameters"]
-
         optimization_args = self._extract_config_values(model_keys.keys(),
                                                         common_optimization_config)
         optimization_args.update(self._extract_config_values(model_keys.keys(),
@@ -275,13 +290,7 @@ class ConfigManager:
         optimization_args.update({k: default_args[k] for k in missing_keys})
 
         return optimization_args
-
-    def get_model_hyperparameters(self, model_name: str) -> dict:
-        return self.models_hyperparameters.get(model_name, None)
-
-    def get_model_hyperparameters_to_optimize(self, model_name: str) -> dict:
-        return self._models_with_hyperparameters_to_optimize.get(model_name,
-                                                                 None)
+    
 
     def _load_config(self, file: Text) -> dict:
         with open(file, "r") as yaml_file:
@@ -377,18 +386,6 @@ class ConfigManager:
     def config(self) -> dict:
         return self._config
 
-    def get_confidence_indexes(self):
-        confidence_level = \
-            self._config["hyperparameters"]["common"][
-                "confidence_level"] if "confidence_level" in \
-                                       self._config["hyperparameters"][
-                                           "common"] else .5
-        likelihood = self._config["hyperparameters"]["common"][
-            "likelihood"]
-        upper_index = likelihood.index(confidence_level)
-        lower_index = len(likelihood) -1 - upper_index
-        return lower_index,upper_index
-
     def get_config_for_source(self, source: str, is_input: bool) -> dict:
         if is_input:
             data_for_source = self._obtain_data_for_current_source(source)
@@ -431,6 +428,43 @@ class ConfigManager:
         ]
         output_sources = [(self._config["output"]["source"], False)]
         return input_sources + output_sources
+
+
+def singleton(cls):
+    instances = {}
+
+    def get_instance(*args, **kwargs):
+        if cls not in instances:
+            instances[cls] = cls(*args, **kwargs)
+        return instances[cls]
+
+    return get_instance
+
+@singleton
+class ModelValueRetriver:
+    def __init__(self, config_manager = ConfigManager()):
+
+        self._config = config_manager.config
+        self._confidence_indexes = ''
+
+    @property
+    def confidence_indexes(self):
+        if self._confidence_indexes:
+            return self._confidence_indexes
+        confidence_level = \
+            self._config["hyperparameters"]["common"][
+                "confidence_level"] if "confidence_level" in \
+                                       self._config["hyperparameters"][
+                                           "common"] else .5
+        likelihood = self._config["hyperparameters"]["common"][
+            "likelihood"]
+        upper_index = likelihood.index(confidence_level)
+        lower_index = len(likelihood) - 1 - upper_index
+        return lower_index, upper_index
+
+    @confidence_indexes.setter
+    def confidence_indexes(self, values: tuple):
+        self._confidence_indexes = values
 
 
 class InitProject:
