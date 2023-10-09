@@ -162,9 +162,13 @@ def _raise_error_if_nan_value(data: pd.DataFrame) -> None:
             + str(dot_rows)
         )
 
-def clear_directory_content(directory_path : str) -> None:
+def clear_directory_content(directory_path : str, exclusions : Optional[int] = None) -> None:
+    if exclusions is None:
+        exclusions = []
     if os.path.exists(directory_path):
         for filename in os.listdir(directory_path):
+            if filename in exclusions:
+                continue
             file_path = os.path.join(directory_path, filename)
             if os.path.isfile(file_path):
                 os.unlink(file_path)

@@ -26,7 +26,9 @@ import copy
 import torch
 import optuna
 import pickle
-from abc import ABC, abstractmethod
+from abc import ABC
+import logging
+logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s',filemode='w')
 
 CUSTOM_MODEL = {
     "NHiTS": CustomNHiTS,
@@ -65,8 +67,8 @@ class BaseModelBuilder(ABC):
                 params[item] = None
         return params
 
-    def _clean_directory(self):
-        clear_directory_content(self._model_dir)
+    def _clean_directory(self, exclusions : Optional[list] = None):
+        clear_directory_content(self._model_dir, exclusions)
         os.makedirs(self._model_dir, exist_ok=True)
         self._cleanup_logs(self._lightning_logs_dir)
         self._cleanup_logs(f'{self._lightning_logs_dir}/{self._model_name}')
@@ -637,7 +639,6 @@ class HyperpametersOptimizer(BaseModelBuilder):
     def run(self):
         n_trials = self._config['common']['hyperparameters_optimization'][
             'nb_trials']
-        best_hyper_params = {}
 
         self._obtain_data()
         self._current_hyperparameters = {}
@@ -647,25 +648,45 @@ class HyperpametersOptimizer(BaseModelBuilder):
                 self._config_manager.get_model_suggest_type(model)
             self._model_name = model
             self._assign_data_models()
+            optuna_storage = 'last_study.db'
             self._model_dir = f'models/hyperparameters_optimization/{self._model_name}'
-            self._clean_directory()
+            self._clean_directory(exclusions=[optuna_storage])
             if self._config['common']['hyperparameters_optimization'][
                 'is_pruning']:
 
-                pruner = optuna.pruners.MedianPruner(n_startup_trials=3,
-                                                     n_warmup_steps=4,
-                                                     interval_steps=4)
+                pruner = optuna.pruners.MedianPruner(n_startup_trials=5,
+                                                     n_warmup_steps=5,
+                                                     interval_steps=5)
             else:
                 pruner = None
             sampler = optuna.samplers.TPESampler(seed=42)
-            study = optuna.create_study(direction='maximize', pruner = pruner,sampler=sampler)
-            study.optimize(self._objective, n_trials=n_trials,
-                           show_progress_bar=True)
+            storage_name = f"sqlite:///{os.path.join(self._model_dir, optuna_storage)}"
+            if os.path.exists(os.path.join(self._model_dir, optuna_storage)):
+                  os.remove(os.path.join(self._model_dir, optuna_storage))
+
+
+            try :
+                study = optuna.load_study(pruner = pruner,
+                                            study_name= optuna_storage.replace('.db',''),
+                                            storage= storage_name,
+                                            sampler=sampler)
+            except KeyError as key_error:
+                logging.warning(f"Study name doesn't exists: {key_error}")
+
+                study = optuna.create_study(direction='maximize',
+                                            pruner = pruner,
+                                            study_name= optuna_storage.replace('.db',''),
+                                            storage= storage_name,
+                                            sampler=sampler,
+                                            load_if_exists=True)
+
+            study.optimize(self._objective, n_trials=n_trials,show_progress_bar=True)
 
             with open(f"{self._model_dir}/best_study.pkl", "wb") as fout:
                 pickle.dump(study, fout)
             print(study.best_params)
             self._values_retriever.confidence_indexes = ''
+
 
     def _objective(self, trial: optuna.Trial):
         self._hyper_possible_values = self._config_manager.hyperparameters_to_optimize[self._model_name]
@@ -680,7 +701,7 @@ class HyperpametersOptimizer(BaseModelBuilder):
         self._obtain_dataloader()
         self._train_model(self._current_hyperparameters,callback_phase='callbacks_for_optimization')
 
-        if self._model.current_epoch == 0:
+        if self._model.current_epoch == 0 or self._model.current_epoch ==1:
             music_thread = threading.Thread(
                 target=os.system('afplay super-mario-bros.mp3'))
             music_thread.start()
@@ -706,6 +727,7 @@ class HyperpametersOptimizer(BaseModelBuilder):
     def _adjust_hyperparameters(self):
         if 'likelihood' in self._params and 'confidence_level' in self._params and\
                 self._params['confidence_level'] != 0.5 and self._params['confidence_level'] \
+                not in self._params['likelihood'] and (1-self._params['confidence_level']) \
                 not in self._params['likelihood']:
             to_remove_1 = self._find_closest_value(self._params['likelihood'], self._params['confidence_level'],
                                   exclude=[0.5])
@@ -716,8 +738,6 @@ class HyperpametersOptimizer(BaseModelBuilder):
             self._params['likelihood'].remove(to_remove_2)
             self._params['likelihood'].append(self._params['confidence_level'])
             self._params['likelihood'].append(1 - self._params['confidence_level'])
-
-
 
         self._params['likelihood'].sort()
 
