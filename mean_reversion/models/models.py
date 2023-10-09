@@ -659,17 +659,18 @@ class HyperpametersOptimizer(BaseModelBuilder):
                                                      interval_steps=5)
             else:
                 pruner = None
-            sampler = optuna.samplers.TPESampler(seed=42)
+            sampler = optuna.samplers.TPESampler()
             storage_name = f"sqlite:///{os.path.join(self._model_dir, optuna_storage)}"
             if os.path.exists(os.path.join(self._model_dir, optuna_storage)):
-                  os.remove(os.path.join(self._model_dir, optuna_storage))
-
+                    os.remove(os.path.join(self._model_dir, optuna_storage))
 
             try :
                 study = optuna.load_study(pruner = pruner,
                                             study_name= optuna_storage.replace('.db',''),
                                             storage= storage_name,
                                             sampler=sampler)
+                n_trials -= len(study.trials)
+
             except KeyError as key_error:
                 logging.warning(f"Study name doesn't exists: {key_error}")
 
@@ -700,7 +701,8 @@ class HyperpametersOptimizer(BaseModelBuilder):
         self._adjust_hyperparameters()
         self._obtain_dataloader()
         self._train_model(self._current_hyperparameters,callback_phase='callbacks_for_optimization')
-
+        if 'likelihood' in self._params:
+            self._params['likelihood'] =  self._config['hyperparameters_optimization']["common"]['likelihood']
         if self._model.current_epoch == 0 or self._model.current_epoch ==1:
             music_thread = threading.Thread(
                 target=os.system('afplay super-mario-bros.mp3'))
@@ -715,8 +717,9 @@ class HyperpametersOptimizer(BaseModelBuilder):
 
         best_value = checkpoint["callbacks"][model_checkpoint_key][
             'best_model_score'].item()
-        print(f'current best return : {best_value}')
 
+        print(f'current best return : {best_value}')
+        os.remove(f"{self._model_dir}/best_model.ckpt")
         return best_value
 
     @staticmethod
@@ -726,9 +729,9 @@ class HyperpametersOptimizer(BaseModelBuilder):
 
     def _adjust_hyperparameters(self):
         if 'likelihood' in self._params and 'confidence_level' in self._params and\
-                self._params['confidence_level'] != 0.5 and self._params['confidence_level'] \
-                not in self._params['likelihood'] and (1-self._params['confidence_level']) \
-                not in self._params['likelihood']:
+                self._params['confidence_level'] != 0.5 and (self._params['confidence_level']
+                not in self._params['likelihood'] or (1-self._params['confidence_level'])
+                not in self._params['likelihood']):
             to_remove_1 = self._find_closest_value(self._params['likelihood'], self._params['confidence_level'],
                                   exclude=[0.5])
             self._params['likelihood'].remove(to_remove_1)

@@ -260,7 +260,7 @@
         "likelihood": {
         },
         "max_encoder_length": {
-            "trial_suggest": "suggest_int"
+            "trial_suggest": "suggest_categorical"
         },
         "max_prediction_length": {
             "trial_suggest": "suggest_categorical"
