@@ -51,22 +51,6 @@ import shutil
 from darts import TimeSeries
 import matplotlib.pyplot as plt
 import scipy.stats as stats
-
-
-logging.basicConfig(
-    level=logging.WARNING,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler("warnings.log", mode="w"),
-        logging.StreamHandler(),
-    ],
-)
-
-
-logging.basicConfig(
-    filename="errors.log", level=logging.ERROR, format="%(asctime)s %(message)s"
-)
-
 load_dotenv()
 
 from mean_reversion.config.config_utils import ConfigManager

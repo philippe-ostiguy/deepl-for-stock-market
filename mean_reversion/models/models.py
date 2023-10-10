@@ -23,12 +23,11 @@ import re
 import subprocess
 import glob
 import copy
-import torch
 import optuna
 import pickle
 from abc import ABC
 import logging
-logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s',filemode='w')
+import torch
 
 CUSTOM_MODEL = {
     "NHiTS": CustomNHiTS,
@@ -53,6 +52,7 @@ class BaseModelBuilder(ABC):
         self._logger = None
         self._model_name = ''
         self._values_retriever = values_retriver
+        self._extra_dirpath = ''
 
 
     def _assign_params(self, hyperparameters_phase : Optional[str] = 'hyperparameters'):
@@ -166,7 +166,7 @@ class BaseModelBuilder(ABC):
         self._test_dataset = TimeSeriesDataSet.from_dataset(self._training_dataset, self._test_data, predict=False, stop_randomization=True)
         self._test_dataloader = self._test_dataset.to_dataloader(train=False, batch_size=self._params['batch_size']*5000)
 
-    def _train_model(self, hyperparameters : dict, callback_phase: Optional[str] = 'callbacks'):
+    def _train_model(self, hyperparameters : dict, hyperparameter_phase: Optional[str] = 'hyperparameters'):
         pl.seed_everything(self._params['random_state'])
         model_to_train = CUSTOM_MODEL[self._model_name]
 
@@ -176,15 +176,15 @@ class BaseModelBuilder(ABC):
         )
 
         callbacks_list = []
-        if getattr(self._config_manager, callback_phase, None):
-            for callback in getattr(self._config_manager, callback_phase)[self._model_name]['callbacks']:
-                if isinstance(callback,
-                              ModelCheckpoint):
-                    self._model_checkpoint = copy.deepcopy(callback)
-                    callbacks_list.append(callback)
-                if isinstance(callback,
-                              EarlyStopping):
-                    callbacks_list.append(copy.deepcopy(callback))
+        callbacks = self._config_manager.get_callbacks(self._model_name,hyperparameter_phase,self._extra_dirpath)['callbacks']
+        for callback in callbacks:
+            if isinstance(callback,
+                          ModelCheckpoint):
+                self._model_checkpoint = copy.deepcopy(callback)
+                callbacks_list.append(callback)
+            if isinstance(callback,
+                          EarlyStopping):
+                callbacks_list.append(copy.deepcopy(callback))
 
         if not callbacks_list:
             callbacks_list = None
@@ -220,9 +220,9 @@ class ModelBuilder(BaseModelBuilder):
 
 
     def run(self):
-        self._obtain_data()
-        for model in self._config["hyperparameters"]["models"]:
 
+        for model in self._config["hyperparameters"]["models"]:
+            self._obtain_data()
             self._model_name = model
             self._assign_data_models()
             self._obtain_dataloader()
@@ -392,7 +392,8 @@ class ModelBuilder(BaseModelBuilder):
 
     def _is_model_better_test(self) -> bool:
         if 'return_on_risk' in self._current_metrics[self._dataset_type]:
-            if self._current_metrics['test']['return_on_risk'] < (.4 * self._current_metrics['predict']['return_on_risk']):
+            if self._current_metrics['test']['return_on_risk'] \
+                    < (self._config['common']['test_performance'] * self._current_metrics['predict']['return_on_risk']):
                 return False
         return True
 
@@ -635,19 +636,20 @@ class HyperpametersOptimizer(BaseModelBuilder):
         self._params_to_optimized = self._assign_params(hyperparameters_phase='hyperparameters_optimization')
 
         self._model_suggested_type = {}
+        self._current_trial = 0
+        self._extra_dirpath = 'trial_v' + str(self._current_trial)
 
     def run(self):
         n_trials = self._config['common']['hyperparameters_optimization'][
             'nb_trials']
 
-        self._obtain_data()
+
         self._current_hyperparameters = {}
         for model in self._config["hyperparameters_optimization"]["models"]:
             self._current_hyperparameters['model'] = {}
             self._model_suggested_type = \
                 self._config_manager.get_model_suggest_type(model)
             self._model_name = model
-            self._assign_data_models()
             optuna_storage = 'last_study.db'
             self._model_dir = f'models/hyperparameters_optimization/{self._model_name}'
             self._clean_directory(exclusions=[optuna_storage])
@@ -657,9 +659,10 @@ class HyperpametersOptimizer(BaseModelBuilder):
                 pruner = optuna.pruners.MedianPruner(n_startup_trials=5,
                                                      n_warmup_steps=5,
                                                      interval_steps=5)
+
             else:
                 pruner = None
-            sampler = optuna.samplers.TPESampler()
+            sampler = optuna.samplers.TPESampler(seed=18)
             storage_name = f"sqlite:///{os.path.join(self._model_dir, optuna_storage)}"
             if os.path.exists(os.path.join(self._model_dir, optuna_storage)):
                     os.remove(os.path.join(self._model_dir, optuna_storage))
@@ -690,6 +693,8 @@ class HyperpametersOptimizer(BaseModelBuilder):
 
 
     def _objective(self, trial: optuna.Trial):
+        self._obtain_data()
+        self._assign_data_models()
         self._hyper_possible_values = self._config_manager.hyperparameters_to_optimize[self._model_name]
         self._current_suggested_type = self._model_suggested_type
         self._current_hyperparameters[self._model_name] = self._assign_hyperparameters(trial)
@@ -700,7 +705,7 @@ class HyperpametersOptimizer(BaseModelBuilder):
 
         self._adjust_hyperparameters()
         self._obtain_dataloader()
-        self._train_model(self._current_hyperparameters,callback_phase='callbacks_for_optimization')
+        self._train_model(self._current_hyperparameters,hyperparameter_phase='hyperparameters_optimization')
         if 'likelihood' in self._params:
             self._params['likelihood'] =  self._config['hyperparameters_optimization']["common"]['likelihood']
         if self._model.current_epoch == 0 or self._model.current_epoch ==1:
@@ -709,8 +714,9 @@ class HyperpametersOptimizer(BaseModelBuilder):
             music_thread.start()
             raise ValueError(
                 'Model only trained for one epoch. Training terminated prematurely.')
+
         checkpoint = torch.load(
-            f"{self._model_dir}/best_model.ckpt")
+            f"{self._model_dir}/{self._extra_dirpath}/best_model.ckpt")
 
         model_checkpoint_key = next(
             key for key in checkpoint["callbacks"] if "ModelCheckpoint" in key)
@@ -719,7 +725,9 @@ class HyperpametersOptimizer(BaseModelBuilder):
             'best_model_score'].item()
 
         print(f'current best return : {best_value}')
-        os.remove(f"{self._model_dir}/best_model.ckpt")
+        shutil.rmtree(f"{self._model_dir}/{self._extra_dirpath}")
+        self._current_trial +=1
+        self._extra_dirpath = 'trial_v' + str(self._current_trial)
         return best_value
 
     @staticmethod

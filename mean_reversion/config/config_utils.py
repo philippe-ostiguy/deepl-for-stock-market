@@ -15,11 +15,26 @@ from mean_reversion.config.model_config import (
     LOSS
 )
 
-
 from copy import deepcopy
 from typing import List, Dict, Text, Any, Optional, Tuple, Union
 import os
 import yaml
+
+import torch
+torch.manual_seed(42)
+
+import logging
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("warnings.log", mode="w"),
+        logging.StreamHandler(),
+    ],
+)
+logging.basicConfig(
+    filename="errors.log", level=logging.ERROR, format="%(asctime)s %(message)s"
+)
 
 
 class ConfigManager:
@@ -89,11 +104,14 @@ class ConfigManager:
             return True
         return False
 
-    def _assign_callbacks(self, model, hyperparameters_phase : Optional[str] = "hyperparameters" ):
+    def get_callbacks(self,
+                      model,
+                      hyperparameters_phase : Optional[str] = "hyperparameters",
+                      extra_dirpath : Optional[str] = ''):
         pl_trainer_kwargs = deepcopy(self._config[hyperparameters_phase]["common"]["pl_trainer_kwargs"])
         callback_config = deepcopy(self._config[hyperparameters_phase]["common"]["callbacks"])
         if not pl_trainer_kwargs:
-            del self._config[ hyperparameters_phase]["common"]["pl_trainer_kwargs"]
+            del self._config[hyperparameters_phase]["common"]["pl_trainer_kwargs"]
             return
 
         for pl_trainer_argument, pl_trainer_value in pl_trainer_kwargs.items():
@@ -121,8 +139,8 @@ class ConfigManager:
                                     callback_args['dirpath'] = f'{MODELS_PATH}/{model}'
                                 else :
                                     callback_args['dirpath'] = f'{MODELS_PATH}/hyperparameters_optimization/{model}'
-
-
+                                if extra_dirpath:
+                                    callback_args['dirpath'] = os.path.join(callback_args['dirpath'],extra_dirpath)
                         callback_instance = PYTORCH_CALLBACKS[callback_name](
                             **callback_args)
                         pl_trainer_kwargs[pl_trainer_argument].append(
@@ -223,7 +241,7 @@ class ConfigManager:
             if model == 'common':
                 continue
 
-            self.callbacks[model] = deepcopy(self._assign_callbacks(model))
+            self.callbacks[model] = deepcopy(self.get_callbacks(model))
             model_args = self._assign_model_hyperparameters(model)
             self.hyperparameters[
                 model] = model_args
@@ -232,7 +250,7 @@ class ConfigManager:
                 self.hyperparameters_to_optimize[
                     model] = self._assign_optimization_hyperparameters(model,
                                                                        model_args)
-                self.callbacks_for_optimization[model] = deepcopy(self._assign_callbacks(model,"hyperparameters_optimization"))
+                self.callbacks_for_optimization[model] = deepcopy(self.get_callbacks(model,"hyperparameters_optimization"))
 
 
     def _assign_model_hyperparameters(self, model):

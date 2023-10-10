@@ -1,7 +1,6 @@
 from torchmetrics import Metric
 import torch
 from pytorch_forecasting import TemporalFusionTransformer, DeepAR, NHiTS, RecurrentNetwork
-from pytorch_forecasting.metrics.base_metrics import MultiHorizonMetric
 from mean_reversion.config.config_utils import ConfigManager, ModelValueRetriver
 
 class PortfolioReturnMetric(Metric):
@@ -39,8 +38,6 @@ class PortfolioReturnMetric(Metric):
             high_predictions = [(high_predictions[i] / former_target[i - 1]) -1 for i in
                                 range(1, len(high_predictions))]
 
-
-
         portfolio_value = 1.0
         no_position_count = 0
         for actual, low_pred, high_pred in zip( target,
@@ -64,6 +61,8 @@ class BaseReturnMetricModel:
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.portfolio_metric = PortfolioReturnMetric()
+        self.best_portfolio_return = None
+        self.best_epoch = None
 
     def validation_step(self, batch, batch_idx):
         log = super().validation_step(batch, batch_idx)
@@ -85,6 +84,14 @@ class BaseReturnMetricModel:
 
         compounded_return = product_of_returns - 1
         self.log('val_PortfolioReturnMetric', compounded_return)
+
+        if self.best_portfolio_return is None or compounded_return > self.best_portfolio_return:
+            self.best_portfolio_return = compounded_return
+            self.best_epoch = self.current_epoch
+
+        print(
+        f"\nBest Portfolio Return so far: {self.best_portfolio_return}, achieved at epoch: {self.best_epoch}")
+
         self.validation_step_outputs.clear()
         self.portfolio_metric.reset()
         super().on_validation_epoch_end()

@@ -30,9 +30,8 @@ from mean_reversion.data_processor import (
 
 from mean_reversion.config.config_utils import InitProject, ConfigManager
 from mean_reversion.factory import DataSourceFactory
-from mean_reversion.models.models import ModelBuilder, HyperpametersOptimizer
-import torch
-torch.manual_seed(42)
+from mean_reversion.models.models import HyperpametersOptimizer
+
 
 if __name__ == "__main__":
 
