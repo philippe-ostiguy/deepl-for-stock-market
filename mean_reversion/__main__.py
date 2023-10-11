@@ -31,7 +31,8 @@ from mean_reversion.data_processor import (
 from mean_reversion.config.config_utils import InitProject, ConfigManager
 from mean_reversion.factory import DataSourceFactory
 from mean_reversion.models.models import HyperpametersOptimizer
-
+import torch
+print(torch.tensor(0.0))
 
 if __name__ == "__main__":
 

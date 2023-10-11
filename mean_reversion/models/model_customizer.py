@@ -3,6 +3,7 @@ import torch
 from pytorch_forecasting import TemporalFusionTransformer, DeepAR, NHiTS, RecurrentNetwork
 from mean_reversion.config.config_utils import ConfigManager, ModelValueRetriver
 
+
 class PortfolioReturnMetric(Metric):
     higher_is_better = True
     full_state_update = True
@@ -11,7 +12,7 @@ class PortfolioReturnMetric(Metric):
 
         self._lower_index, self._upper_index = values_retriever.confidence_indexes
         self._config =config_manager.config
-        self.add_state("portfolio_value", default=torch.tensor(0.0), dist_reduce_fx="sum")
+        self.add_state("daily_returns", default=torch.tensor([]), dist_reduce_fx="cat")
 
     def update(self, preds: torch.Tensor, target_tensor: tuple):
         values = preds['prediction'].detach().cpu().numpy().squeeze()
@@ -38,30 +39,48 @@ class PortfolioReturnMetric(Metric):
             high_predictions = [(high_predictions[i] / former_target[i - 1]) -1 for i in
                                 range(1, len(high_predictions))]
 
-        portfolio_value = 1.0
+        daily_returns = []
         no_position_count = 0
         for actual, low_pred, high_pred in zip( target,
                                                      low_predictions,
                                                      high_predictions):
             if low_pred > 0 and high_pred >0:
-                portfolio_value *= (1 + actual)
+                daily_returns.append(actual)
             elif high_pred < 0 and low_pred < 0:
-                portfolio_value *= (1 - actual)
+                daily_returns.append(-actual)
             else:
                no_position_count +=1
 
-        self.portfolio_value += portfolio_value-1
+        daily_returns_tensor = torch.tensor(daily_returns)
+        self.daily_returns = torch.cat(
+            [self.daily_returns, daily_returns_tensor], dim=0)
+        print(f'\nNb of trade in update(): {self.daily_returns.shape[0]}')
 
 
     def compute(self):
-        return self.portfolio_value
+
+        if self.daily_returns.shape[0] == 0 or not self.daily_returns.shape[0]:
+            return torch.tensor(0.0)
+
+        if self.daily_returns.shape[0] == 0:
+            return torch.tensor(0.0)
+
+
+        annualized_return = torch.prod(1 + self.daily_returns) ** (
+                    252.0 / self.daily_returns.shape[0]) - 1
+        annualized_risk = self.daily_returns.std() * (252 ** 0.5)
+        return_on_risk = annualized_return / annualized_risk if annualized_risk != 0 else torch.tensor(
+            0.0)
+        print(f'\nReturn on risk in compute(): {return_on_risk.item()}')
+
+        return return_on_risk
 
 
 class BaseReturnMetricModel:
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.portfolio_metric = PortfolioReturnMetric()
-        self.best_portfolio_return = None
+        self.best_return_on_risk = None
         self.best_epoch = None
 
     def validation_step(self, batch, batch_idx):
@@ -72,25 +91,24 @@ class BaseReturnMetricModel:
         if preds is None:
             preds = self(prediction_batch)
 
-        stock_return = self.portfolio_metric(preds, targets)
-        log["portfolio_return"] = stock_return
+        return_on_risk = self.portfolio_metric(preds, targets)
+        self.log('return_on_risk', return_on_risk, on_step=True, on_epoch=True)
 
-        return log
+        return self.log
 
     def on_validation_epoch_end(self):
-        product_of_returns = torch.stack(
-            [(1 + x['portfolio_return']) for x in self.validation_step_outputs]
-        ).prod()
+        aggregated_return_on_risk = self.trainer.callback_metrics[
+            'return_on_risk']
 
-        compounded_return = product_of_returns - 1
-        self.log('val_PortfolioReturnMetric', compounded_return)
+        self.log('val_PortfolioReturnMetric', aggregated_return_on_risk)
 
-        if self.best_portfolio_return is None or compounded_return > self.best_portfolio_return:
-            self.best_portfolio_return = compounded_return
+
+        if self.best_return_on_risk is None or aggregated_return_on_risk > self.best_return_on_risk:
+            self.best_return_on_risk = aggregated_return_on_risk
             self.best_epoch = self.current_epoch
 
         print(
-        f"\nBest Portfolio Return so far: {self.best_portfolio_return}, achieved at epoch: {self.best_epoch}")
+            f"\nBest Return on Risk so far: {self.best_return_on_risk}, achieved at epoch: {self.best_epoch}")
 
         self.validation_step_outputs.clear()
         self.portfolio_metric.reset()

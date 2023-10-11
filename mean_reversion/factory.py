@@ -4,7 +4,8 @@ from mean_reversion.data_processor import (
     BaseDataProcessor,
     AlphaVantage,
     FRED,
-    MacroTrends
+    MacroTrends,
+    Reddit
 )
 
 

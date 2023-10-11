@@ -4,7 +4,7 @@ import pandas as pd
 import lightning.pytorch as pl
 from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
 from tensorboard.backend.event_processing import event_accumulator
-from pytorch_forecasting import TimeSeriesDataSet
+from pytorch_forecasting import TimeSeriesDataSet, BaseModelWithCovariates
 from pytorch_forecasting.data import GroupNormalizer
 from typing import Callable, Union, Optional
 import matplotlib.pyplot as plt
@@ -17,6 +17,7 @@ import threading
 from mean_reversion.models.model_customizer import CustomNHiTS,CustomDeepAR,CustomTemporalFusionTransformer,CustomlRecurrentNetwork
 from mean_reversion.config.config_utils import ConfigManager, ModelValueRetriver
 from mean_reversion.utils import clear_directory_content, read_json, save_json
+from mean_reversion.models.common import get_risk_rewards_metrics
 import pytz
 import datetime
 import re
@@ -53,6 +54,9 @@ class BaseModelBuilder(ABC):
         self._model_name = ''
         self._values_retriever = values_retriver
         self._extra_dirpath = ''
+        self._lower_index = ''
+        self._upper_index = ''
+        self._best_model : Optional[BaseModelWithCovariates] = ''
 
 
     def _assign_params(self, hyperparameters_phase : Optional[str] = 'hyperparameters'):
@@ -204,6 +208,133 @@ class BaseModelBuilder(ABC):
                           train_dataloaders=self._train_dataloader,
                           val_dataloaders=self._predict_dataloader)
 
+    def _calculate_metrics(self, dataloader, data):
+        self._all_predicted_returns = []
+        self._all_actual_returns = []
+        self._preds_class = []
+        self._actual_class = []
+        self._time_indices = []
+        self._cumulative_predicted_return = 1
+        self._returns_on_trade = []
+        self._cumulative_actual_return = 1
+        self._cumulative_index = len(data) - len(
+            dataloader.dataset)
+        self._nb_of_trades = 0
+        max_drawdown = 0
+        peak = self._cumulative_predicted_return
+        raw_predictions = self._best_model.predict(dataloader,
+                                                   mode="raw",
+                                                   return_x=True,
+                                                   return_y=True)
+
+        for index in range(raw_predictions.output.prediction.shape[0]):
+            current_prediction, indices = raw_predictions.output.prediction[
+                index].sort()
+
+            median_pred_value = current_prediction.median(dim=1).values
+            if current_prediction.shape[1] == 1:
+                lower_value = median_pred_value
+                upper_value = median_pred_value
+            else :
+                lower_value = current_prediction[0, self._lower_index]
+                upper_value = current_prediction[0, self._upper_index]
+
+            actual_value = raw_predictions.y[0][index].item()
+
+            if not self._config["common"][
+                "make_data_stationary"] and index == 0:
+                continue
+
+            if not self._config["common"]["make_data_stationary"]:
+                actual_return = (actual_value / raw_predictions.y[0][
+                    index - 1].item()) - 1
+                median_pred_return = (median_pred_value / raw_predictions.y[0][
+                    index - 1].item()) - 1
+                upper_return = (upper_value / raw_predictions.y[0][
+                    index - 1].item()) - 1
+                lower_return = (lower_value / raw_predictions.y[0][
+                    index - 1].item()) - 1
+
+            else:
+                median_pred_return = median_pred_value
+                lower_return = lower_value
+                upper_return = upper_value
+                actual_return = actual_value
+
+            if lower_return > 0 and upper_return > 0:
+                self._cumulative_predicted_return *= (
+                        1 + actual_return)
+                self._returns_on_trade.append(actual_return)
+                self._preds_class.append(median_pred_return)
+                self._actual_class.append(actual_return)
+
+            elif upper_return < 0 and lower_return < 0:
+                self._cumulative_predicted_return *= (1 - actual_return)
+                self._returns_on_trade.append(-actual_return)
+                self._preds_class.append(median_pred_return)
+                self._actual_class.append(actual_return)
+
+            if self._cumulative_predicted_return > peak:
+                peak = self._cumulative_predicted_return
+            else:
+                drawdown = (peak - self._cumulative_predicted_return) / peak
+                if drawdown > max_drawdown:
+                    max_drawdown = drawdown
+
+            self._cumulative_actual_return *= (1 + actual_return)
+            self._time_indices.append(data["time"].iloc[self._cumulative_index])
+            self._cumulative_index += 1
+            self._all_predicted_returns.append(median_pred_return)
+            self._all_actual_returns.append(actual_return)
+        
+        
+        self._returns_on_trade = torch.tensor(self._returns_on_trade)
+        self._all_predicted_returns = [prediction.item() for prediction in
+                                       self._all_predicted_returns]
+        self._max_drawdown = max_drawdown
+
+
+    def _process_metrics(self, dataset_type, forecast_data):
+        predicted_return_class = [1 if ret >= 0 else 0 for ret in
+                                  self._preds_class]
+        actual_return_class = [1 if ret >= 0 else 0 for ret in self._actual_class]
+        f1_score_value = f1_score(actual_return_class, predicted_return_class,
+                                  average='weighted')
+        rmse = np.sqrt(
+            mean_squared_error(self._all_actual_returns, self._all_predicted_returns))
+        if self._params["max_encoder_length"] <= 20:
+            rolling_windows = self._params["max_encoder_length"] - 1
+        else :
+            rolling_windows = 20
+        naive_forecast = forecast_data["target"].rolling(rolling_windows).mean()
+        naive_forecast = naive_forecast[len(forecast_data) - len(self._all_actual_returns):].values
+
+        naive_forecast_rmse = np.sqrt(
+            mean_squared_error(self._all_actual_returns, naive_forecast))
+        risk_reward_metrics = get_risk_rewards_metrics(self._returns_on_trade)
+        self._return_on_risk = risk_reward_metrics['return_on_risk']
+
+        actual_annualized_return = (self._cumulative_actual_return)** (252 / len(self._all_actual_returns)) - 1
+        actual_daily_returns = np.array(self._all_actual_returns)
+        actual_annualized_risk = np.std(actual_daily_returns) * (252 ** 0.5)
+        actual_return_on_risk = actual_annualized_return / actual_annualized_risk if actual_annualized_risk != 0 else 0
+
+
+        if not hasattr(self, '_metrics'):
+            self._metrics = {}
+
+        self._metrics[dataset_type] = {
+            "rmse": rmse,
+            "f1_score": f1_score_value,
+            "naive_forecast_rmse": naive_forecast_rmse,
+            "rmse_vs_naive": rmse / naive_forecast_rmse,
+            "return": self._cumulative_predicted_return - 1,
+            "actual_return": self._cumulative_actual_return - 1,
+            "return_on_risk" : self._return_on_risk,
+            "actual_return_on_risk" : actual_return_on_risk,
+            "max_drawdown" : self._max_drawdown,
+            "nb_of_trades" : self._returns_on_trade.shape[0]
+        }
 
 class ModelBuilder(BaseModelBuilder):
     def __init__(
@@ -414,122 +545,6 @@ class ModelBuilder(BaseModelBuilder):
             metric: self._metrics[self._dataset_type][metric] for metric in metrics_to_choose_model
         }
 
-    def _calculate_metrics(self,dataloader, data):
-        self._all_predicted_returns = []
-        self._all_actual_returns = []
-        self._all_predicted_values = []
-        self._all_actual_values = []
-        self._preds_class = []
-        self._actual_class = []
-        self._time_indices = []
-        self._cumulative_predicted_return = 1
-        self._cumulative_actual_return = 1
-        self._cumulative_index = len(data) - len(
-            dataloader.dataset)
-        self._nb_of_trades = 0
-        max_drawdown = 0
-        peak = self._cumulative_predicted_return
-
-        for index in range(self._raw_predictions.output.prediction.shape[0]):
-            current_prediction, indices = self._raw_predictions.output.prediction[index].sort()
-
-            median_pred_value = current_prediction.median(dim=1).values
-            lower_value = current_prediction[0,self._lower_index]
-            upper_value = current_prediction[0,self._upper_index]
-
-            actual_value = self._raw_predictions.y[0][index].item()
-
-            if not self._config["common"]["make_data_stationary"] and index  == 0:
-                continue
-
-            if not self._config["common"]["make_data_stationary"]:
-                actual_return = (actual_value/ self._raw_predictions.y[0][index -1].item()) -1
-                median_pred_return = (median_pred_value / self._raw_predictions.y[0][index -1].item()) -1
-                upper_return = (upper_value /  self._raw_predictions.y[0][index - 1].item())-1
-                lower_return = (lower_value / self._raw_predictions.y[0][index - 1].item())-1
-
-            else :
-                median_pred_return = median_pred_value
-                lower_return = lower_value
-                upper_return = upper_value
-                actual_return = actual_value
-
-            if lower_return > 0 and upper_return>0:
-                self._cumulative_predicted_return *= (
-                        1 + actual_return)
-                self._nb_of_trades +=1
-                self._preds_class.append(median_pred_return)
-                self._actual_class.append(actual_return)
-
-            elif upper_return < 0 and lower_return < 0:
-                self._cumulative_predicted_return *= (1 - actual_return)
-                self._nb_of_trades += 1
-                self._preds_class.append(median_pred_return)
-                self._actual_class.append(actual_return)
-
-            if self._cumulative_predicted_return > peak:
-                peak =  self._cumulative_predicted_return
-            else:
-                drawdown = (peak - self._cumulative_predicted_return) / peak
-                if drawdown > max_drawdown:
-                    max_drawdown = drawdown
-
-
-            self._cumulative_actual_return *= (1 + actual_return)
-
-            self._time_indices.append(data["time"].iloc[self._cumulative_index])
-            self._cumulative_index += 1
-            self._all_predicted_returns.append(median_pred_return)
-            self._all_actual_returns.append(actual_return)
-            self._all_predicted_values.append(median_pred_value)
-            self._all_actual_values.append(actual_value)
-
-        self._all_predicted_returns = [prediction.item() for prediction in self._all_predicted_returns]
-        self._all_predicted_values = [prediction.item() for prediction in
-                                       self._all_predicted_values]
-        self._max_drawdown = max_drawdown
-
-    def _process_metrics(self, dataset_type, forecast_data):
-        predicted_return_class = [1 if ret >= 0 else 0 for ret in
-                                  self._preds_class]
-        actual_return_class = [1 if ret >= 0 else 0 for ret in self._actual_class]
-        f1_score_value = f1_score(actual_return_class, predicted_return_class,
-                                  average='weighted')
-        rmse = np.sqrt(
-            mean_squared_error(self._all_actual_returns, self._all_predicted_returns))
-        if self._params["max_encoder_length"] <= 20:
-            rolling_windows = self._params["max_encoder_length"] - 1
-        else :
-            rolling_windows = 20
-        naive_forecast = forecast_data["target"].rolling(rolling_windows).mean()
-        naive_forecast = naive_forecast[len(forecast_data) - len(self._all_actual_returns):].values
-
-        naive_forecast_rmse = np.sqrt(
-            mean_squared_error(self._all_actual_returns, naive_forecast))
-
-        num_days = len(self._all_actual_returns)
-        annualized_return = (self._cumulative_predicted_return ) ** (252 / num_days) - 1
-        actual_annualized_return = (self._cumulative_actual_return)** (252 / num_days) - 1
-        actual_daily_returns = np.array(
-            self._all_actual_returns)
-        annualized_risk = np.std(actual_daily_returns) * (252 ** 0.5)
-        return_on_risk = annualized_return / annualized_risk if annualized_risk != 0 else 0
-        actual_return_on_risk = actual_annualized_return / annualized_risk if annualized_risk != 0 else 0
-        if not hasattr(self, '_metrics'):
-            self._metrics = {}
-        self._metrics[dataset_type] = {
-            "rmse": rmse,
-            "f1_score": f1_score_value,
-            "naive_forecast_rmse": naive_forecast_rmse,
-            "rmse_vs_naive": rmse / naive_forecast_rmse,
-            "return": self._cumulative_predicted_return - 1,
-            "actual_return": self._cumulative_actual_return - 1,
-            "return_on_risk" : return_on_risk,
-            "actual_return_on_risk" : actual_return_on_risk,
-            "max_drawdown" : self._max_drawdown,
-            "nb_of_trades" : self._nb_of_trades
-        }
-
 
     def _save_metrics(self,dataset_type):
         metrics_path = os.path.join(
@@ -548,9 +563,9 @@ class ModelBuilder(BaseModelBuilder):
     def _plot_predictions(self, dataset_type):
 
         plt.figure(figsize=(10, 6))
-        plt.plot(self._time_indices, self._all_predicted_values, color='blue',
+        plt.plot(self._time_indices, self._all_predicted_returns, color='blue',
                  label='Predicted Values')
-        plt.plot(self._time_indices, self._all_actual_values, color='black',
+        plt.plot(self._time_indices, self._all_actual_returns, color='black',
                  label='Actual Values')
         plt.xlabel('Time')
         plt.ylabel('Output')
@@ -566,10 +581,6 @@ class ModelBuilder(BaseModelBuilder):
         for dataloader, data, dataset_type in [(self._predict_dataloader, self._predict_data, 'predict'), (self._test_dataloader, self._test_data, 'test')]:
             if dataloader is None or data is None:
                 continue
-            self._raw_predictions = self._best_model.predict(dataloader,
-                                                             mode="raw",
-                                                             return_x=True,
-                                                             return_y=True)
             self._calculate_metrics(dataloader, data)
             self._process_metrics(dataset_type,data)
             self._save_metrics(dataset_type)
@@ -724,11 +735,27 @@ class HyperpametersOptimizer(BaseModelBuilder):
         best_value = checkpoint["callbacks"][model_checkpoint_key][
             'best_model_score'].item()
 
-        print(f'current best return : {best_value}')
-        shutil.rmtree(f"{self._model_dir}/{self._extra_dirpath}")
-        self._current_trial +=1
-        self._extra_dirpath = 'trial_v' + str(self._current_trial)
+        print(f'current best return on risk : {best_value}')
+
+        if best_value<0:
+            self._reset_objective()
+            return best_value
+
+        self._best_model = self._model.load_from_checkpoint(
+            f"{self._model_dir}/{self._extra_dirpath}/best_model.ckpt")
+        self._calculate_metrics(self._test_dataloader,self._test_data)
+        self._process_metrics('test', self._test_data)
+
+        self._reset_objective()
+        print(f'Current test return on risk {self._return_on_risk.item()}')
+        if best_value * self._config['common']['test_performance'] > self._return_on_risk.item():
+            return 0
         return best_value
+
+    def _reset_objective(self) :
+        shutil.rmtree(f"{self._model_dir}/{self._extra_dirpath}")
+        self._current_trial += 1
+        self._extra_dirpath = 'trial_v' + str(self._current_trial)
 
     @staticmethod
     def _find_closest_value(lst, K, exclude):
@@ -753,9 +780,9 @@ class HyperpametersOptimizer(BaseModelBuilder):
         self._params['likelihood'].sort()
 
         self._current_hyperparameters[self._model_name]['loss'] = ConfigManager.assign_loss_fct(self._current_hyperparameters[self._model_name],self._params)['loss']
-        index_high_quantile = self._params['likelihood'].index(self._params['confidence_level'])
-        index_low_quantile = self._params['likelihood'].index(1 - self._params['confidence_level'])
-        self._values_retriever.confidence_indexes = (index_low_quantile,index_high_quantile)
+        self._upper_index = self._params['likelihood'].index(self._params['confidence_level'])
+        self._lower_index = self._params['likelihood'].index(1 - self._params['confidence_level'])
+        self._values_retriever.confidence_indexes = (self._lower_index,self._upper_index)
 
     def _assign_hyperparameters(self, trial: optuna.Trial) -> dict:
         hyperparameters_value = {}
