@@ -35,11 +35,9 @@ import threading
 import os
 
 if __name__ == "__main__":
-
-    init_project = InitProject()
-    init_project.create_common_path()
     config_manager = ConfigManager()
-    init_project.create_custom_path(config_manager)
+    InitProject.create_common_path()
+    InitProject.create_custom_path()
 
     data_processor_helper = DataProcessorHelper(config_manager=config_manager)
     for source, is_input in config_manager.get_sources():

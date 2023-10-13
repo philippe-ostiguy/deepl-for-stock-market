@@ -496,16 +496,20 @@ class ModelValueRetriver:
 
 
 class InitProject:
-    def __init__(self, paths_to_create: list = PATHS_TO_CREATE, config : Optional[ConfigManager] = None):
+    def __init__(self, paths_to_create: list = PATHS_TO_CREATE, config : Optional[ConfigManager] = ConfigManager()):
         self._paths_to_create = paths_to_create
         self._config = config
 
 
     @classmethod
-    def create_custom_path(cls, config) -> Any:
+    def create_custom_path(cls) -> Any:
+        instance = cls()
+
         paths_to_create = []
-        for model in config.config['hyperparameters']['models']:
+        for model in instance._config.config['hyperparameters']['models']:
             paths_to_create.append(os.path.join(MODELS_PATH,model))
+        for model in instance._config.config['hyperparameters_optimization']['models']:
+            paths_to_create.append(os.path.join(MODELS_PATH, model))
         cls._create_path(paths_to_create)
 
 
@@ -514,7 +518,7 @@ class InitProject:
         cls._create_path(paths_to_create)
 
     @classmethod
-    def _create_path(self, paths_to_create :list):
+    def _create_path(cls, paths_to_create :list):
         for path_to_create in paths_to_create:
             if not os.path.exists(path_to_create):
                 os.makedirs(path_to_create)

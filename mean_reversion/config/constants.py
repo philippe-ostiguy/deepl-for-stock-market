@@ -32,19 +32,20 @@ MODEL_OPTIMIZATION_PATH = 'models/hyperparameter_optimization_optuna'
 RAW_PATH = os.path.join(INPUT_PATH, "raw")
 PREPROCESSED_PATH = os.path.join(INPUT_PATH, "preprocessed")
 ENGINEERED_PATH = os.path.join(INPUT_PATH, "engineered")
+LIGHTNING_LOGS = 'lightning_logs'
 PICKLE = "pickle"
 TRANSFORMATION_PATH = os.path.join(INPUT_PATH, PICKLE)
 MODEL_DATA_PATH = os.path.join(INPUT_PATH, "model_data")
 PATHS_TO_CREATE = [
     INPUT_PATH,
-    WORK_DIRECTORY,
     MODELS_PATH,
     RAW_PATH,
     PREPROCESSED_PATH,
     ENGINEERED_PATH,
     TRANSFORMATION_PATH,
     MODEL_DATA_PATH,
-    MODEL_OPTIMIZATION_PATH
+    MODEL_OPTIMIZATION_PATH,
+    LIGHTNING_LOGS
 ]
 
 # Data attributes
