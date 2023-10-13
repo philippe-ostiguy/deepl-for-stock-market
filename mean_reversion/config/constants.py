@@ -53,3 +53,6 @@ MODEL_PHASES = ["train", "predict"]
 
 # Data engineering
 ENGINEERED_DATA_TO_REMOVE = 2
+
+
+DATASETS = ['train', 'predict', 'test']

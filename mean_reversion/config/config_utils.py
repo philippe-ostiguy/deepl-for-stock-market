@@ -348,11 +348,20 @@ class ConfigManager:
             sub_dict["data"] = new_data
         return data_sources
 
-    def _add_data_files_output(self, output_data: Dict) -> Dict:
-        value = output_data["data"]
-        output_data = self._add_model_data_path(output_data, "output")
-        output_data["data"] = [self._add_path_values_in_config(value, "output")]
-        return output_data
+    def _add_data_files_output(self,all_output: List) -> List:
+        new_data = {}
+        final_data = []
+        for data_per_source in all_output:
+            new_data_list = []
+            current_data_source = {}
+            for target in data_per_source["data"]:
+                new_data= self._add_path_values_in_config(target, "output")
+                self._add_model_data_path(new_data, "output")
+                new_data_list.append(deepcopy(new_data))
+            current_data_source['source'] = deepcopy(data_per_source['source'])
+            current_data_source['data'] = deepcopy(new_data_list)
+            final_data.append(current_data_source)
+        return final_data
 
     def _add_model_data_path(self, sub_dict: Dict, data_type: str) -> Dict:
         sub_dict["model_data"] = {}
@@ -373,7 +382,7 @@ class ConfigManager:
     def _add_path_values_in_config(self, value: str, data_type: str) -> Dict:
         return {
             "asset": value,
-            "raw": os.path.join(RAW_PATH, f"{value}_{data_type}.csv"),
+            "raw": os.path.join(RAW_PATH, f"{value}_input.csv"),
             "preprocessed": os.path.join(
                 PREPROCESSED_PATH, f"{value}_{data_type}.csv"
             ),
@@ -430,21 +439,22 @@ class ConfigManager:
             return data_for_source
 
         else:
-            if self._config["output"]["source"] == source:
-                output_config = self._config["output"]
-                output_config["common"] = self._config["common"]
-                return output_config
-            else:
-                raise ValueError(
-                    f"No configuration found for output source: {source}"
-                )
+            # for data in sources['data']:
+            #     for dataset in self._datasets:
+            #         shutil.copy(data["engineered"][dataset],
+            #                 data["model_data"][dataset])
+            for output in self._config["output"]:
+                if source == output['source']:
+                    output_config = output
+                    output_config["common"] = self._config["common"]
+                    return output_config
 
     def get_sources(self) -> List[Tuple[str, bool]]:
         input_sources = [
             (src["source"], True)
             for src in self._config["inputs"]["past_covariates"]["sources"]
         ]
-        output_sources = [(self._config["output"]["source"], False)]
+        output_sources = [(output['source'], False) for output in self._config['output']]
         return input_sources + output_sources
 
 

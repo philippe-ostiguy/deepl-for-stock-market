@@ -71,6 +71,7 @@ from mean_reversion.config.constants import (
     MODEL_PHASES,
     MODEL_DATA_PATH,
     ENGINEERED_DATA_TO_REMOVE,
+    DATASETS
 )
 
 
@@ -155,30 +156,33 @@ class DataForModelSelector:
         self._data_for_model_train = None
         self._data_for_model_predict = None
         self._data_for_model_test = None
+        self._datasets = DATASETS
 
     def run(self) -> None:
-        output_data = self._config["output"]["data"][0]
-        shutil.copy(
-            output_data["engineered"]["train"],
-            self._config["output"]["model_data"]["train"],
-        )
-        shutil.copy(
-            output_data["engineered"]["predict"],
-            self._config["output"]["model_data"]["predict"],
-        )
-        shutil.copy(
-            output_data["engineered"]["test"],
-            self._config["output"]["model_data"]["test"],
-        )
+        last_data = {}
+        for dataset in self._datasets:
+            for sources in self._config["output"]:
+                for data in sources['data']:
+                    if not os.path.exists(data["engineered"][dataset]):
+                        continue
+                    if not hasattr(self, '_all_output'):
+                        self._all_output = read_csv_to_pd_formatted(data["engineered"][dataset], sort_by_column_name='time')
+                        last_data = data
+                        continue
+                    new_data = read_csv_to_pd_formatted(data["engineered"][dataset], 'time')
+                    self._all_output= self._all_output.merge(new_data, on='time', how='outer')
+                    last_data = data
+            if not last_data:
+                raise ValueError('No output file found')
+            write_to_csv_formatted(
+                self._all_output,
+                last_data["model_data"][dataset],
+                'time')
+            del self._all_output
+
 
         self._output_data_train = read_csv_to_pd_formatted(
-            self._config["output"]["model_data"]["train"], "time"
-        )
-        self._output_data_predict = read_csv_to_pd_formatted(
-            self._config["output"]["model_data"]["predict"], "time"
-        )
-        self._output_data_test = read_csv_to_pd_formatted(
-            self._config["output"]["model_data"]["test"], "time"
+            last_data["model_data"]['train'], "time"
         )
 
         for input_in_config in self._config["inputs"]["past_covariates"][
@@ -809,20 +813,35 @@ class OutputDataEngineering(BaseInputOutputDataEngineering):
             ]["preprocessed"]
         )
 
+        target_column = (self._processor._config["data"][self._processor._current_data_index]['asset'] + '_target').lower()
         if not self._processor._config["common"]["make_data_stationary"]:
-            self._engineered_data["target"] = self._engineered_data[self._processor._config["attributes"][0]]
+            if '4. close' in self._engineered_data.columns:
+                self._engineered_data[target_column] = self._engineered_data['4. close']
+            elif 'value' in self._engineered_data.columns:
+                self._engineered_data[target_column] = self._engineered_data['value']
 
-        else :
-            self._engineered_data["target"] = (
-            self._engineered_data[self._processor._config["attributes"][0]]
-            / self._engineered_data[self._processor._config["attributes"][1]]
+            else :
+                raise ValueError('Columns most have open and close name or value name')
+
+        if '1. open' in self._engineered_data.columns and '4. close' in self._engineered_data.columns:
+            self._engineered_data[target_column] = (
+            self._engineered_data['4. close']
+            / self._engineered_data["1. open"]
         ) - 1
+
+        elif 'value' in self._engineered_data.columns :
+            self._engineered_data[target_column] \
+                = (self._engineered_data['value']/
+                   self._engineered_data["value"].shift(1)) - 1
+            self._engineered_data.iloc[0] = 0
+        else :
+            raise ValueError('Columns most have open and close name or value name')
 
         self._engineered_data =\
             self._data_processor_helper.remove_first_transformed_data(
                 self._engineered_data
             )
-        columns_to_keep = {"target"}
+        columns_to_keep = {target_column}
         self._engineered_data = self._engineered_data[[*columns_to_keep]]
 
         train_data = self._data_processor_helper.obtain_train_data(
@@ -864,6 +883,7 @@ class BaseDataProcessor(ABC):
             "resources/configs/models_support.json"
         )["attributes_to_discard"]
         if is_input_feature:
+            pass
             self._feature_engineering_strategy = InputDataEngineering(
                 self, data_processor_helper
             )

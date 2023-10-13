@@ -5,7 +5,7 @@ import lightning.pytorch as pl
 from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
 from tensorboard.backend.event_processing import event_accumulator
 from pytorch_forecasting import TimeSeriesDataSet, BaseModelWithCovariates
-from pytorch_forecasting.data import GroupNormalizer
+from pytorch_forecasting.data import GroupNormalizer, MultiNormalizer
 from typing import Callable, Union, Optional
 import matplotlib.pyplot as plt
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
@@ -18,6 +18,7 @@ from mean_reversion.models.model_customizer import CustomNHiTS,CustomDeepAR,Cust
 from mean_reversion.config.config_utils import ConfigManager, ModelValueRetriver
 from mean_reversion.utils import clear_directory_content, read_json, save_json
 from mean_reversion.models.common import get_risk_rewards_metrics
+from mean_reversion.config.constants import DATASETS
 import pytz
 import datetime
 import re
@@ -26,7 +27,7 @@ import glob
 import copy
 import optuna
 import pickle
-from abc import ABC
+from abc import ABC, abstractmethod
 import logging
 import torch
 
@@ -47,7 +48,7 @@ class BaseModelBuilder(ABC):
         self._config_manager = config_manager
         self._config = self._config_manager.config
         self._params = {}
-        self._datasets = ['train', 'predict', 'test']
+        self._datasets = DATASETS
         self._model_dir = ''
         self._lightning_logs_dir = ''
         self._logger = None
@@ -118,10 +119,11 @@ class BaseModelBuilder(ABC):
             input_past = getattr(self, f'_input_past_{dataset_type}')
             input_future = getattr(self, f'_input_future_{dataset_type}',
                                    pd.DataFrame())
-            output = getattr(self, f'_output_{dataset_type}')[['target']]
+            output = getattr(self, f'_output_{dataset_type}')
 
             if not input_future.empty:
                 input_future = input_future.drop(columns=['time'])
+            output = output.drop(columns=['time'])
 
             data = pd.concat([input_past, input_future, output], axis=1)
             data['group'] = 'group_1'
@@ -130,14 +132,25 @@ class BaseModelBuilder(ABC):
     def _obtain_dataloader(self):
 
         self._continuous_cols = [col for col in self._input_past_train.columns if col not in ["time"]]
-        self._continuous_cols.append("target")
+        self._targets = [col for col in self._output_train.columns if col not in ["time"]]
+        if len(self._targets) > 1 :
+            list_of_normalizers = []
+            for target in self._targets:
+                list_of_normalizers.append(GroupNormalizer(
+                groups=["group"]
+            ))
+            target_normalizer = MultiNormalizer(list_of_normalizers)
+        else :
+            target_normalizer = GroupNormalizer(
+                groups=["group"]
+            )
+
+        self._continuous_cols.extend(self._targets)
         self._add_encoder_length = True
         self._add_relative_time_idx = True
         self._add_target_scales = True
         self._static_categoricals = ["group"]
 
-        if "RecurrentNetwork" in self._model_name or 'DeepAR' in self._model_name:
-            self._continuous_cols = ["target"]
         if "NHiTS" in self._model_name :
             self._categorical_cols = []
             self._add_relative_time_idx = False
@@ -148,7 +161,7 @@ class BaseModelBuilder(ABC):
         self._training_dataset = TimeSeriesDataSet(
             self._train_data,
             time_idx="time",
-            target="target",
+            target=self._targets,
             group_ids=["group"],
             static_categoricals=self._static_categoricals,
             max_encoder_length=self._params["max_encoder_length"],
@@ -158,9 +171,7 @@ class BaseModelBuilder(ABC):
             add_encoder_length=self._add_encoder_length,
             add_relative_time_idx= self._add_relative_time_idx,
             add_target_scales=self._add_target_scales,
-            target_normalizer=GroupNormalizer(
-                groups=["group"]
-            )
+            target_normalizer=target_normalizer
         )
 
 
@@ -196,63 +207,86 @@ class BaseModelBuilder(ABC):
         if self._lightning_logs_dir:
             self._logger = TensorBoardLogger(self._lightning_logs_dir,
                                              name=self._model_name)
+        if torch.cuda.is_available():
+            accelerator = 'gpu'
+        else :
+            accelerator = 'auto'
+
         self._trainer = pl.Trainer(
             max_epochs=self._params["epochs"],
             callbacks=callbacks_list,
             logger=self._logger,
             gradient_clip_val=self._params["gradient_clip_val"],
             enable_model_summary=True,
+            accelerator= accelerator
         )
 
         self._trainer.fit(self._model,
                           train_dataloaders=self._train_dataloader,
                           val_dataloaders=self._predict_dataloader)
 
-    def _calculate_metrics(self, dataloader, data):
-        self._all_predicted_returns = []
-        self._all_actual_returns = []
+    def _coordinate_metrics_calculation(self,
+                                        dataloader,
+                                        data,
+                                        dataset_type,
+                                        is_execute_all: Optional[bool] = True):
+        self._raw_predictions = self._best_model.predict(dataloader,
+                                                         mode="raw",
+                                                         return_x=True,
+                                                         return_y=True)
+        self._initialize_metric_variables()
+        for target_item, prediction in enumerate(
+                self._raw_predictions.output.prediction):
+            self._target_item = target_item
+            self._preds_current_stock = prediction
+            self._gather_metrics(dataloader, data)
+            self._calculate_metrics(data)
+            if is_execute_all:
+                self._plot_predictions(dataset_type)
+
+        self._calculate_aggregate_metrics(dataset_type)
+        if is_execute_all:
+            self._save_metrics(dataset_type)
+
+
+    def _gather_metrics(self, dataloader, current_data_set):
+        self._current_all_preds = []
+        self._current_all_actuals = []
+        self._returns_on_trade_list = []
         self._preds_class = []
         self._actual_class = []
         self._time_indices = []
         self._cumulative_predicted_return = 1
-        self._returns_on_trade = []
         self._cumulative_actual_return = 1
-        self._cumulative_index = len(data) - len(
+        self._cumulative_index = len(current_data_set) - len(
             dataloader.dataset)
-        self._nb_of_trades = 0
         max_drawdown = 0
         peak = self._cumulative_predicted_return
-        raw_predictions = self._best_model.predict(dataloader,
-                                                   mode="raw",
-                                                   return_x=True,
-                                                   return_y=True)
 
-        for index in range(raw_predictions.output.prediction.shape[0]):
-            current_prediction, indices = raw_predictions.output.prediction[
-                index].sort()
-
-            median_pred_value = current_prediction.median(dim=1).values
-            if current_prediction.shape[1] == 1:
+        for index in range(self._preds_current_stock.shape[0]):
+            current_prediction, indices = self._preds_current_stock[index][0].sort()
+            median_pred_value = current_prediction.median(dim=0).values
+            if current_prediction.shape[0] == 1:
                 lower_value = median_pred_value
                 upper_value = median_pred_value
             else :
-                lower_value = current_prediction[0, self._lower_index]
-                upper_value = current_prediction[0, self._upper_index]
+                lower_value = current_prediction[self._lower_index]
+                upper_value = current_prediction[self._upper_index]
 
-            actual_value = raw_predictions.y[0][index].item()
+            actual_value = self._raw_predictions.y[0][self._target_item][index].item()
 
             if not self._config["common"][
                 "make_data_stationary"] and index == 0:
                 continue
 
             if not self._config["common"]["make_data_stationary"]:
-                actual_return = (actual_value / raw_predictions.y[0][
+                actual_return = (actual_value / self._raw_predictions.y[0][self._target_item][
                     index - 1].item()) - 1
-                median_pred_return = (median_pred_value / raw_predictions.y[0][
+                median_pred_return = (median_pred_value / self._raw_predictions.y[0][self._target_item][
                     index - 1].item()) - 1
-                upper_return = (upper_value / raw_predictions.y[0][
+                upper_return = (upper_value / self._raw_predictions.y[0][self._target_item][
                     index - 1].item()) - 1
-                lower_return = (lower_value / raw_predictions.y[0][
+                lower_return = (lower_value / self._raw_predictions.y[0][self._target_item][
                     index - 1].item()) - 1
 
             else:
@@ -264,13 +298,13 @@ class BaseModelBuilder(ABC):
             if lower_return > 0 and upper_return > 0:
                 self._cumulative_predicted_return *= (
                         1 + actual_return)
-                self._returns_on_trade.append(actual_return)
+                self._returns_on_trade_list.append(actual_return)
                 self._preds_class.append(median_pred_return)
                 self._actual_class.append(actual_return)
 
             elif upper_return < 0 and lower_return < 0:
                 self._cumulative_predicted_return *= (1 - actual_return)
-                self._returns_on_trade.append(-actual_return)
+                self._returns_on_trade_list.append(-actual_return)
                 self._preds_class.append(median_pred_return)
                 self._actual_class.append(actual_return)
 
@@ -282,59 +316,128 @@ class BaseModelBuilder(ABC):
                     max_drawdown = drawdown
 
             self._cumulative_actual_return *= (1 + actual_return)
-            self._time_indices.append(data["time"].iloc[self._cumulative_index])
+            self._time_indices.append(current_data_set["time"].iloc[self._cumulative_index])
             self._cumulative_index += 1
-            self._all_predicted_returns.append(median_pred_return)
-            self._all_actual_returns.append(actual_return)
-        
-        
-        self._returns_on_trade = torch.tensor(self._returns_on_trade)
-        self._all_predicted_returns = [prediction.item() for prediction in
-                                       self._all_predicted_returns]
+            self._current_all_preds.append(median_pred_return)
+            self._current_all_actuals.append(actual_return)
+
+        self._current_all_preds = [prediction.item() for prediction in
+                                       self._current_all_preds]
         self._max_drawdown = max_drawdown
+        self._returns_on_trade = torch.tensor(self._returns_on_trade_list)
+
+    def _initialize_metric_variables(self):
+        self._actual_return_on_risk = []
+        self._naive_forecast_rmse = []
+        self._f1_score_value = []
+        self._rmse = []
+        self._nb_trades =[]
+        self._all_preds_returns = []
+        self._all_actual_returns = []
+        self._max_drawdown_all = []
+        self._return_on_risk = []
+        self._returns_on_trade_all = []
 
 
-    def _process_metrics(self, dataset_type, forecast_data):
+    def _calculate_metrics(self,
+                         forecast_data):
+
         predicted_return_class = [1 if ret >= 0 else 0 for ret in
                                   self._preds_class]
         actual_return_class = [1 if ret >= 0 else 0 for ret in self._actual_class]
-        f1_score_value = f1_score(actual_return_class, predicted_return_class,
-                                  average='weighted')
-        rmse = np.sqrt(
-            mean_squared_error(self._all_actual_returns, self._all_predicted_returns))
+        self._f1_score_value.append(f1_score(actual_return_class, predicted_return_class,
+                                  average='weighted'))
+        self._all_actual_returns.append(self._cumulative_actual_return)
+        self._max_drawdown_all.append(self._max_drawdown)
+        self._all_preds_returns.append(self._cumulative_predicted_return)
+        self._rmse.append(np.sqrt(
+            mean_squared_error(self._current_all_actuals, self._current_all_preds)))
         if self._params["max_encoder_length"] <= 20:
             rolling_windows = self._params["max_encoder_length"] - 1
         else :
             rolling_windows = 20
-        naive_forecast = forecast_data["target"].rolling(rolling_windows).mean()
-        naive_forecast = naive_forecast[len(forecast_data) - len(self._all_actual_returns):].values
+        naive_forecast = forecast_data[self._targets[self._target_item]].rolling(rolling_windows).mean()
+        naive_forecast = naive_forecast[len(forecast_data) - len(self._current_all_actuals):].values
 
-        naive_forecast_rmse = np.sqrt(
-            mean_squared_error(self._all_actual_returns, naive_forecast))
+        self._naive_forecast_rmse.append(np.sqrt(
+            mean_squared_error(self._current_all_actuals, naive_forecast)))
         risk_reward_metrics = get_risk_rewards_metrics(self._returns_on_trade)
-        self._return_on_risk = risk_reward_metrics['return_on_risk']
+        self._return_on_risk.append(risk_reward_metrics['return_on_risk'])
+        self._returns_on_trade_all.append(risk_reward_metrics['annualized_risk'])
+        self._nb_trades.append(len(self._returns_on_trade_list))
 
-        actual_annualized_return = (self._cumulative_actual_return)** (252 / len(self._all_actual_returns)) - 1
-        actual_daily_returns = np.array(self._all_actual_returns)
+        actual_annualized_return = \
+            (self._cumulative_actual_return)** (252 / len(self._current_all_actuals)) - 1
+        actual_daily_returns = np.array(self._current_all_actuals)
         actual_annualized_risk = np.std(actual_daily_returns) * (252 ** 0.5)
-        actual_return_on_risk = actual_annualized_return / actual_annualized_risk if actual_annualized_risk != 0 else 0
+        self._actual_return_on_risk.append(actual_annualized_return / actual_annualized_risk if actual_annualized_risk != 0 else 0)
 
+    def _obtain_aggregate_metrics(self, metrics_to_obtain_average):
+        weighted_av_metrics = []
+        for metric in metrics_to_obtain_average:
+            if sum(self._nb_trades) == 0:
+                if isinstance(metric, torch.Tensor):
+                    weighted_av_metrics.append(torch.tensor(0))
+                else:
+                    weighted_av_metrics.append(0)
+            else :
+                weighted_av_metrics.append(
+                    sum([a * b for a, b in zip(metric, self._nb_trades)]) / sum(
+                        self._nb_trades))
+        return weighted_av_metrics
 
+    def _calculate_aggregate_metrics(self, dataset_type):
         if not hasattr(self, '_metrics'):
             self._metrics = {}
 
+        weighted_av_metrics = self._obtain_aggregate_metrics(
+            [self._rmse, self._f1_score_value, self._naive_forecast_rmse,
+             self._return_on_risk, self._actual_return_on_risk, self._returns_on_trade_all]
+        )
+        self._aggregated_return_on_risk = weighted_av_metrics[3]
+
         self._metrics[dataset_type] = {
-            "rmse": rmse,
-            "f1_score": f1_score_value,
-            "naive_forecast_rmse": naive_forecast_rmse,
-            "rmse_vs_naive": rmse / naive_forecast_rmse,
-            "return": self._cumulative_predicted_return - 1,
-            "actual_return": self._cumulative_actual_return - 1,
-            "return_on_risk" : self._return_on_risk,
-            "actual_return_on_risk" : actual_return_on_risk,
-            "max_drawdown" : self._max_drawdown,
-            "nb_of_trades" : self._returns_on_trade.shape[0]
+            "rmse": weighted_av_metrics[0],
+            "f1_score": weighted_av_metrics[1],
+            "naive_forecast_rmse": weighted_av_metrics[2],
+            "rmse_vs_naive": weighted_av_metrics[0] / weighted_av_metrics[2] if weighted_av_metrics[2]!=0 else 0,
+            "return": weighted_av_metrics[5].item(),
+            "actual_return": np.prod(self._all_actual_returns) - 1,
+            "return_on_risk": weighted_av_metrics[3].item(),
+            "actual_return_on_risk": weighted_av_metrics[4],
+            "max_drawdown": self._max_drawdown_all,
+            "nb_of_trades": sum(self._nb_trades)
         }
+
+    def _save_metrics(self, dataset_type):
+        metrics_path = os.path.join(
+            f'{self._model_dir}', 'metrics.json')
+        if os.path.exists(metrics_path):
+            with open(metrics_path, 'r', encoding='utf-8') as f:
+                existing_metrics = json.load(f)
+            existing_metrics[dataset_type] = self._metrics[dataset_type]
+        else:
+            existing_metrics = {dataset_type: self._metrics[dataset_type]}
+
+        with open(metrics_path, 'w', encoding='utf-8') as f:
+            json.dump(existing_metrics, f, ensure_ascii=False, indent=4)
+
+    def _plot_predictions(self, dataset_type):
+
+        plt.figure(figsize=(10, 6))
+        plt.plot(self._time_indices, self._current_all_preds, color='blue',
+                 label='Predicted Values')
+        plt.plot(self._time_indices, self._current_all_actuals, color='black',
+                 label='Actual Values')
+        plt.xlabel('Time')
+        plt.ylabel('Output')
+        plt.title(f'Actual vs Predicted Values over time - {dataset_type}')
+        plt.legend()
+        asset = self._targets[self._target_item].replace("_target",'')
+        plt.savefig(os.path.join(f'{self._model_dir}',
+                                 f'{asset}_forecast_{dataset_type}.png'))
+        plt.close()
+
 
 class ModelBuilder(BaseModelBuilder):
     def __init__(
@@ -366,11 +469,6 @@ class ModelBuilder(BaseModelBuilder):
             self._coordinate_interpretions()
             self._save_run_information()
             self._coordinate_select_best_model()
-
-        music_thread = threading.Thread(
-            target=os.system('afplay super-mario-bros.mp3'))
-        music_thread.start()
-        print('Program finished successfully')
 
 
 
@@ -545,46 +643,13 @@ class ModelBuilder(BaseModelBuilder):
             metric: self._metrics[self._dataset_type][metric] for metric in metrics_to_choose_model
         }
 
-
-    def _save_metrics(self,dataset_type):
-        metrics_path = os.path.join(
-            f'{self._model_dir}', 'metrics.json')
-        if os.path.exists(metrics_path):
-            with open(metrics_path, 'r', encoding='utf-8') as f:
-                existing_metrics = json.load(f)
-            existing_metrics[dataset_type] = self._metrics[dataset_type]
-        else:
-            existing_metrics = {dataset_type: self._metrics[dataset_type]}
-
-        with open(metrics_path, 'w', encoding='utf-8') as f:
-            json.dump(existing_metrics, f, ensure_ascii=False, indent=4)
-
-
-    def _plot_predictions(self, dataset_type):
-
-        plt.figure(figsize=(10, 6))
-        plt.plot(self._time_indices, self._all_predicted_returns, color='blue',
-                 label='Predicted Values')
-        plt.plot(self._time_indices, self._all_actual_returns, color='black',
-                 label='Actual Values')
-        plt.xlabel('Time')
-        plt.ylabel('Output')
-        plt.title(f'Actual vs Predicted Values over time - {dataset_type}')
-        plt.legend()
-        plt.savefig(os.path.join(f'models/{self._model_name}',
-                                 f'actuals_vs_predictions_{dataset_type}.png'))
-        plt.close()
-
-
     def _coordinate_evaluation(self):
 
         for dataloader, data, dataset_type in [(self._predict_dataloader, self._predict_data, 'predict'), (self._test_dataloader, self._test_data, 'test')]:
             if dataloader is None or data is None:
                 continue
-            self._calculate_metrics(dataloader, data)
-            self._process_metrics(dataset_type,data)
-            self._save_metrics(dataset_type)
-            self._plot_predictions(dataset_type)
+
+            self._coordinate_metrics_calculation(dataloader,data,dataset_type)
 
     def _save_metrics_from_tensorboardflow(self):
         metrics_dict = {}
@@ -673,7 +738,7 @@ class HyperpametersOptimizer(BaseModelBuilder):
 
             else:
                 pruner = None
-            sampler = optuna.samplers.TPESampler(seed=18)
+            sampler = optuna.samplers.TPESampler(seed=42)
             storage_name = f"sqlite:///{os.path.join(self._model_dir, optuna_storage)}"
             if os.path.exists(os.path.join(self._model_dir, optuna_storage)):
                     os.remove(os.path.join(self._model_dir, optuna_storage))
@@ -719,12 +784,12 @@ class HyperpametersOptimizer(BaseModelBuilder):
         self._train_model(self._current_hyperparameters,hyperparameter_phase='hyperparameters_optimization')
         if 'likelihood' in self._params:
             self._params['likelihood'] =  self._config['hyperparameters_optimization']["common"]['likelihood']
-        if self._model.current_epoch == 0 or self._model.current_epoch ==1:
+        if self._model.current_epoch == 0:
             music_thread = threading.Thread(
                 target=os.system('afplay super-mario-bros.mp3'))
             music_thread.start()
             raise ValueError(
-                'Model only trained for one epoch. Training terminated prematurely.')
+                f'Model only trained for {self._model.current_epoch} epoch. Training terminated prematurely.')
 
         checkpoint = torch.load(
             f"{self._model_dir}/{self._extra_dirpath}/best_model.ckpt")
@@ -737,19 +802,25 @@ class HyperpametersOptimizer(BaseModelBuilder):
 
         print(f'current best return on risk : {best_value}')
 
-        if best_value<0:
+        if best_value<=0:
             self._reset_objective()
             return best_value
 
         self._best_model = self._model.load_from_checkpoint(
             f"{self._model_dir}/{self._extra_dirpath}/best_model.ckpt")
-        self._calculate_metrics(self._test_dataloader,self._test_data)
-        self._process_metrics('test', self._test_data)
+
+        self._coordinate_metrics_calculation(self._test_dataloader,self._test_data, 'test',False)
 
         self._reset_objective()
-        print(f'Current test return on risk {self._return_on_risk.item()}')
-        if best_value * self._config['common']['test_performance'] > self._return_on_risk.item():
+
+        print(f'Current test return on risk {self._aggregated_return_on_risk}')
+        if best_value * self._config['common']['test_performance'] > self._aggregated_return_on_risk:
             return 0
+        print(f'\nNb of trades on test set {sum(self._nb_trades)}')
+        if sum(self._nb_trades) <= self._config['common']['min_nb_trades']:
+            print(f'\nLow nb of trades on test set {sum(self._nb_trades)}')
+            return 0
+
         return best_value
 
     def _reset_objective(self) :

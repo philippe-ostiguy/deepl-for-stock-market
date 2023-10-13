@@ -6,6 +6,7 @@ common :
   preprocessing : False
   engineering : False
   model_phase : 'train'
+  min_nb_trades : 30
   train_test_split : [.8,.10,.10]
   correlation_threshold : .5
   min_validation_forecasts : 95
@@ -30,29 +31,29 @@ inputs:
   #    size: 100
     - source: 'av'
       data:
-        - 'SPY'
-        - 'set_dynamically_50_largest_stocks'
-        - 'NATURAL_GAS'
-        - '3month'
-        - '10year'
-        - '2year'
-        - 'EUR'
-        - 'WTI'
-        - 'MSFT'
-        - 'GOOGL'
-        - 'AAPL'
+#        - 'SPY'
+#        - 'set_dynamically_50_largest_stocks'
+#        - 'NATURAL_GAS'
+#        - '3month'
+#        - '10year'
+#        - '2year'
+#        - 'EUR'
+#        - 'WTI'
+#        - 'MSFT'
+#        - 'GOOGL'
+#        - 'AAPL'
         - 'AMZN'
     - source : 'fred'
       data:
-        - 'set_dynamically'
-        - 'T5YIE'
-        - 'T10YIE'
-        - 'DEXUSNZ'
+#        - 'set_dynamically'
+#        - 'T5YIE'
+#        - 'T10YIE'
+#        - 'DEXUSNZ'
         - 'VIXCLS'
     - source : 'macrotrends'
       data :
-         - 'set_dynamically'
-         - 'wheat'
+#         - 'set_dynamically'
+#         - 'wheat'
          - 'corn'
   future_covariates :
       data:
@@ -60,16 +61,20 @@ inputs:
         - 'month'
 
 output :
-  source : 'av'
-  data : 'SPY'
-  attributes :
-    - '4. close'
-    - '1. open'
+  - source : 'av'
+    data :
+      - 'SPY'
+      - 'WTI'
+      - 'META'
+  - source : 'macrotrends'
+    data :
+      - 'corn'
+
 
 hyperparameters:
   common:
     confidence_level : .7
-    batch_size: 64
+    batch_size: 128
     epochs: 300
     num_loader_workers : 4
     random_state: 42
@@ -84,7 +89,7 @@ hyperparameters:
 #      anneal_strategy: "linear"
 #      cycle_momentum: False
     likelihood: [0.05, 0.1, 0.3, 0.5, 0.7, 0.9, 0.95]
-    max_encoder_length: 64
+    max_encoder_length: 16
     max_prediction_length: 1
     callbacks :
       EarlyStopping :
@@ -104,13 +109,13 @@ hyperparameters:
         - 'ModelCheckPoint'
   models :
     TemporalFusionTransformer:
-      loss: 'MASE'
-      learning_rate: 0.001
-      hidden_size: 256
-      lstm_layers : 3
-      attention_head_size: 8
+      loss: 'QuantileLoss'
+      learning_rate: 0.01
+      hidden_size: 16
+      lstm_layers : 1
+      attention_head_size: 1
       dropout: 0.1
-      hidden_continuous_size: 32
+      hidden_continuous_size: 16
       #reduce_on_plateau_patience: 5
       outputsize : 7
       weight_decay : 0.01
@@ -166,7 +171,7 @@ hyperparameters_optimization:
 
   models:
     TemporalFusionTransformer:
-      loss: ['QuantileLoss','RMSE','SMAPE']
+      loss: 'QuantileLoss'
       learning_rate: .1
       hidden_size: 16
       lstm_layers: 1

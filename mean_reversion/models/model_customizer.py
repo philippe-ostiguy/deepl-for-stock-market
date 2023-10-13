@@ -2,7 +2,8 @@ from torchmetrics import Metric
 import torch
 from pytorch_forecasting import TemporalFusionTransformer, DeepAR, NHiTS, RecurrentNetwork
 from mean_reversion.config.config_utils import ConfigManager, ModelValueRetriver
-
+from mean_reversion.models.common import get_risk_rewards_metrics
+import logging
 
 class PortfolioReturnMetric(Metric):
     higher_is_better = True
@@ -12,68 +13,93 @@ class PortfolioReturnMetric(Metric):
 
         self._lower_index, self._upper_index = values_retriever.confidence_indexes
         self._config =config_manager.config
-        self.add_state("daily_returns", default=torch.tensor([]), dist_reduce_fx="cat")
+        self.add_state("daily_returns", default=[], dist_reduce_fx="cat")
 
-    def update(self, preds: torch.Tensor, target_tensor: tuple):
-        values = preds['prediction'].detach().cpu().numpy().squeeze()
-        preds = values.tolist()
+    def update(self, preds: torch.Tensor, target_tensors: tuple):
+        targets_size = len(target_tensors)
+        for item in range(targets_size+1):
+            if item == 0:
+                print('\n')
+            print(f'current item in update() : {item}')
+            target_tensor = target_tensors[0][item]
 
-        if all(isinstance(lst, list) for lst in preds):
-            sorted_preds = [sorted(lst) for lst in preds]
-            low_predictions = [lst[self._lower_index] for lst in sorted_preds]
-            high_predictions =[lst[self._upper_index] for lst in sorted_preds]
-        else :
-            low_predictions = preds
-            high_predictions = preds
+            values = preds['prediction'][item].detach().cpu().numpy().squeeze()
+            list_preds = values.tolist()
 
-        target_tensor = target_tensor[0]
-        target = target_tensor.squeeze().tolist()
+            if all(isinstance(lst, list) for lst in list_preds):
+                sorted_preds = [sorted(lst) for lst in list_preds]
+                low_predictions = [lst[self._lower_index] for lst in sorted_preds]
+                high_predictions =[lst[self._upper_index] for lst in sorted_preds]
+            else :
+                low_predictions = list_preds
+                high_predictions = list_preds
+
+            target = target_tensor.squeeze().tolist()
 
 
-        if not self._config["common"]["make_data_stationary"]:
-            former_target = target
-            target = [(target[i] / target[i - 1]) -1 for i in range(1, len(target))]
+            if not self._config["common"]["make_data_stationary"]:
+                former_target = target
+                target = [(target[i] / target[i - 1]) -1 for i in range(1, len(target))]
 
-            low_predictions = [(low_predictions[i] / former_target[i - 1]) -1 for i in
-                               range(1, len(low_predictions))]
-            high_predictions = [(high_predictions[i] / former_target[i - 1]) -1 for i in
-                                range(1, len(high_predictions))]
+                low_predictions = [(low_predictions[i] / former_target[i - 1]) -1 for i in
+                                   range(1, len(low_predictions))]
+                high_predictions = [(high_predictions[i] / former_target[i - 1]) -1 for i in
+                                    range(1, len(high_predictions))]
 
-        daily_returns = []
-        no_position_count = 0
-        for actual, low_pred, high_pred in zip( target,
-                                                     low_predictions,
-                                                     high_predictions):
-            if low_pred > 0 and high_pred >0:
-                daily_returns.append(actual)
-            elif high_pred < 0 and low_pred < 0:
-                daily_returns.append(-actual)
+            daily_returns = []
+            no_position_count = 0
+            for actual, low_pred, high_pred in zip( target,
+                                                         low_predictions,
+                                                         high_predictions):
+                if low_pred > 0 and high_pred >0:
+                    daily_returns.append(actual)
+                elif high_pred < 0 and low_pred < 0:
+                    daily_returns.append(-actual)
+                else:
+                   no_position_count +=1
+
+            daily_returns_tensor = torch.tensor(daily_returns)
+            if len(self.daily_returns) <= item:
+                self.daily_returns.append(daily_returns_tensor)
             else:
-               no_position_count +=1
+                self.daily_returns[item] = torch.cat(
+                    [self.daily_returns[item], daily_returns_tensor], dim=0)
+            if item == 0:
+                print('\n')
+            print(f'Nb of trade in update(): {len(self.daily_returns[item])}')
 
-        daily_returns_tensor = torch.tensor(daily_returns)
-        self.daily_returns = torch.cat(
-            [self.daily_returns, daily_returns_tensor], dim=0)
-        print(f'\nNb of trade in update(): {self.daily_returns.shape[0]}')
 
 
     def compute(self):
-
-        if self.daily_returns.shape[0] == 0 or not self.daily_returns.shape[0]:
+        if not self.daily_returns:
             return torch.tensor(0.0)
 
-        if self.daily_returns.shape[0] == 0:
+        weighted_return_on_risks = torch.tensor(0.0)
+        total_trades = 0
+        all_metrics = []
+
+        for idx, returns in enumerate(self.daily_returns):
+            print(f'Item index in compute: {idx}')
+            metrics = get_risk_rewards_metrics(returns)
+            num_of_trades = returns.shape[0]
+            return_on_risk = metrics['return_on_risk']
+            weighted_return_on_risks += return_on_risk * num_of_trades
+            total_trades += num_of_trades
+            all_metrics.append(metrics)
+
+        if total_trades <= self._config['common']['min_nb_trades']:
+            print(
+                f'\nLow nb of trades in compute: {total_trades}')
             return torch.tensor(0.0)
-
-
-        annualized_return = torch.prod(1 + self.daily_returns) ** (
-                    252.0 / self.daily_returns.shape[0]) - 1
-        annualized_risk = self.daily_returns.std() * (252 ** 0.5)
-        return_on_risk = annualized_return / annualized_risk if annualized_risk != 0 else torch.tensor(
-            0.0)
-        print(f'\nReturn on risk in compute(): {return_on_risk.item()}')
-
-        return return_on_risk
+        avg_weighted_return_on_risk = weighted_return_on_risks / total_trades
+        print(
+            f'\nWeighted return on risk in compute(): {avg_weighted_return_on_risk}')
+        threshold_evaluation = 20
+        if avg_weighted_return_on_risk > threshold_evaluation:
+            logging.warning(f"\nOn current epoch, avg_weighted_return_on_risk is "
+                            f"higher than {threshold_evaluation}: {avg_weighted_return_on_risk}")
+            return 0
+        return avg_weighted_return_on_risk
 
 
 class BaseReturnMetricModel:
