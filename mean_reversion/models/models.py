@@ -738,7 +738,7 @@ class HyperpametersOptimizer(BaseModelBuilder):
 
             else:
                 pruner = None
-            sampler = optuna.samplers.TPESampler(seed=42)
+            sampler = optuna.samplers.TPESampler()
             storage_name = f"sqlite:///{os.path.join(self._model_dir, optuna_storage)}"
             if os.path.exists(os.path.join(self._model_dir, optuna_storage)):
                     os.remove(os.path.join(self._model_dir, optuna_storage))
