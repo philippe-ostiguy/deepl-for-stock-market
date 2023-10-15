@@ -108,7 +108,7 @@ class BaseModelBuilder(ABC):
             input_past = pd.read_csv(
                 f"resources/input/model_data/input_past_{dataset}.csv")
             input_past.columns = input_past.columns.str.replace('.', '_',
-                                                                regex=True)
+                                                                regex=False)
             setattr(self, f'_input_past_{dataset}', input_past)
 
             output = pd.read_csv(f"resources/input/model_data/output_{dataset}.csv")

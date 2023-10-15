@@ -3,8 +3,8 @@ common :
   end_date : '2023-06-15'
   max_missing_data : .02
   fetching : False
-  preprocessing : False
-  engineering : False
+  preprocessing : True
+  engineering : True
   model_phase : 'train'
   min_nb_trades : 30
   train_test_split : [.8,.10,.10]

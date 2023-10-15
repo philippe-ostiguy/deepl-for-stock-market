@@ -47,7 +47,6 @@ import csv
 import requests
 import logging
 from contextlib import suppress
-import shutil
 from darts import TimeSeries
 import matplotlib.pyplot as plt
 import scipy.stats as stats
@@ -452,7 +451,7 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
 
         adjusted_data = adjusted_data.sort_index()
         adjusted_data = adjusted_data.replace([np.inf, -np.inf], np.nan)
-        adjusted_data = adjusted_data.fillna(method="ffill")
+        adjusted_data = adjusted_data.ffill()
 
         return adjusted_data
 
@@ -502,7 +501,6 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
         valid_transformations = []
         if not self._processor._config["common"]["make_data_stationary"] :
             return "identity"
-
         for name, transform_function in self._transformations:
             transformed_data = transform_function(data)
             if transformed_data is None or (
