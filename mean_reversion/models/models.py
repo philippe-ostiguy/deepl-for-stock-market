@@ -183,12 +183,12 @@ class BaseModelBuilder(ABC):
 
     def _train_model(self, hyperparameters : dict, hyperparameter_phase: Optional[str] = 'hyperparameters'):
         pl.seed_everything(self._params['random_state'])
-        model_to_train = CUSTOM_MODEL[self._model_name]
 
-        self._model = model_to_train.from_dataset(
+        self._model = self._model_to_train.from_dataset(
             dataset=self._training_dataset,
             **hyperparameters[self._model_name],
         )
+
 
         callbacks_list = []
         callbacks = self._config_manager.get_callbacks(self._model_name,hyperparameter_phase,self._extra_dirpath)['callbacks']
@@ -462,6 +462,7 @@ class ModelBuilder(BaseModelBuilder):
             self._obtain_dataloader()
             self._model_dir = f'models/{self._model_name}'
             self._clean_directory()
+            self._model_to_train =  CUSTOM_MODEL[self._model_name]
             self._train_model(self._config_manager.hyperparameters)
             self._obtain_best_model()
             self._coordinate_evaluation()
@@ -474,8 +475,8 @@ class ModelBuilder(BaseModelBuilder):
 
     def _obtain_best_model(self):
         best_model_path = self._model_checkpoint.best_model_path
-        self._best_model = self._model.load_from_checkpoint(best_model_path)
-        #self._best_model = self._model.load_from_checkpoint('tempo/TemporalFusionTransformer/best_model.ckpt')
+        self._best_model = self._model_to_train.load_from_checkpoint(best_model_path)
+        #self._best_model = self._model_to_train.load_from_checkpoint('tempo/TemporalFusionTransformer/best_model.ckpt')
 
 
     def _coordinate_interpretions(self):
@@ -781,6 +782,7 @@ class HyperpametersOptimizer(BaseModelBuilder):
 
         self._adjust_hyperparameters()
         self._obtain_dataloader()
+        self._model_to_train = CUSTOM_MODEL[self._model_name]
         self._train_model(self._current_hyperparameters,hyperparameter_phase='hyperparameters_optimization')
         if 'likelihood' in self._params:
             self._params['likelihood'] =  self._config['hyperparameters_optimization']["common"]['likelihood']
@@ -806,7 +808,7 @@ class HyperpametersOptimizer(BaseModelBuilder):
             self._reset_objective()
             return best_value
 
-        self._best_model = self._model.load_from_checkpoint(
+        self._best_model = self._model_to_train.load_from_checkpoint(
             f"{self._model_dir}/{self._extra_dirpath}/best_model.ckpt")
 
         self._coordinate_metrics_calculation(self._test_dataloader,self._test_data, 'test',False)
