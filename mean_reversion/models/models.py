@@ -2,6 +2,7 @@ from pathlib import Path
 import shutil
 import pandas as pd
 import lightning.pytorch as pl
+import time
 from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
 from tensorboard.backend.event_processing import event_accumulator
 from pytorch_forecasting import TimeSeriesDataSet, BaseModelWithCovariates
@@ -114,6 +115,14 @@ class BaseModelBuilder(ABC):
             output = pd.read_csv(f"resources/input/model_data/output_{dataset}.csv")
             setattr(self, f'_output_{dataset}', output)
 
+    def _initialize_training_variables(self):
+        if torch.cuda.is_available():
+            self._accelerator = 'gpu'
+            self._num_workers = 2
+        else :
+            self._accelerator = 'auto'
+            self._num_workers = 0
+
     def _assign_data_models(self):
         for dataset_type in self._datasets:
             input_past = getattr(self, f'_input_past_{dataset_type}')
@@ -175,11 +184,11 @@ class BaseModelBuilder(ABC):
         )
 
 
-        self._train_dataloader = self._training_dataset.to_dataloader(train=True, batch_size=self._params['batch_size'])
+        self._train_dataloader = self._training_dataset.to_dataloader(train=True, batch_size=self._params['batch_size'], num_workers = self._num_workers)
         self._predict_dataset = TimeSeriesDataSet.from_dataset(self._training_dataset, self._predict_data, predict=False, stop_randomization=True)
-        self._predict_dataloader = self._predict_dataset.to_dataloader(train=False, batch_size=self._params['batch_size']*5000)
+        self._predict_dataloader = self._predict_dataset.to_dataloader(train=False, batch_size=self._params['batch_size']*5000,num_workers = self._num_workers)
         self._test_dataset = TimeSeriesDataSet.from_dataset(self._training_dataset, self._test_data, predict=False, stop_randomization=True)
-        self._test_dataloader = self._test_dataset.to_dataloader(train=False, batch_size=self._params['batch_size']*5000)
+        self._test_dataloader = self._test_dataset.to_dataloader(train=False, batch_size=self._params['batch_size']*5000,num_workers = self._num_workers)
 
     def _train_model(self, hyperparameters : dict, hyperparameter_phase: Optional[str] = 'hyperparameters'):
         pl.seed_everything(self._params['random_state'])
@@ -207,10 +216,7 @@ class BaseModelBuilder(ABC):
         if self._lightning_logs_dir:
             self._logger = TensorBoardLogger(self._lightning_logs_dir,
                                              name=self._model_name)
-        if torch.cuda.is_available():
-            accelerator = 'gpu'
-        else :
-            accelerator = 'auto'
+
 
         self._trainer = pl.Trainer(
             max_epochs=self._params["epochs"],
@@ -218,12 +224,17 @@ class BaseModelBuilder(ABC):
             logger=self._logger,
             gradient_clip_val=self._params["gradient_clip_val"],
             enable_model_summary=True,
-            accelerator= accelerator
+            accelerator= self._accelerator
         )
+        start_time = time.time()
 
         self._trainer.fit(self._model,
                           train_dataloaders=self._train_dataloader,
                           val_dataloaders=self._predict_dataloader)
+        end_time = time.time()
+
+        elapsed_time = end_time - start_time
+        print(f"Elapsed time with {self._num_workers} workers: {elapsed_time} seconds")
 
     def _coordinate_metrics_calculation(self,
                                         dataloader,
@@ -459,6 +470,7 @@ class ModelBuilder(BaseModelBuilder):
             self._obtain_data()
             self._model_name = model
             self._assign_data_models()
+            self._intialize_training_variables()
             self._obtain_dataloader()
             self._model_dir = f'models/{self._model_name}'
             self._clean_directory()
@@ -470,8 +482,6 @@ class ModelBuilder(BaseModelBuilder):
             self._coordinate_interpretions()
             self._save_run_information()
             self._coordinate_select_best_model()
-
-
 
     def _obtain_best_model(self):
         best_model_path = self._model_checkpoint.best_model_path
@@ -772,6 +782,7 @@ class HyperpametersOptimizer(BaseModelBuilder):
     def _objective(self, trial: optuna.Trial):
         self._obtain_data()
         self._assign_data_models()
+        self._initialize_training_variables()
         self._hyper_possible_values = self._config_manager.hyperparameters_to_optimize[self._model_name]
         self._current_suggested_type = self._model_suggested_type
         self._current_hyperparameters[self._model_name] = self._assign_hyperparameters(trial)
@@ -804,7 +815,7 @@ class HyperpametersOptimizer(BaseModelBuilder):
 
         print(f'current best return on risk : {best_value}')
 
-        if best_value<=0:
+
             self._reset_objective()
             return best_value
 

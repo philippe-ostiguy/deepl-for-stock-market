@@ -22,19 +22,23 @@ import yaml
 
 import torch
 torch.manual_seed(42)
-
 import logging
+
 logging.basicConfig(
     level=logging.WARNING,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler("warnings.log", mode="w"),
         logging.StreamHandler(),
     ],
 )
-logging.basicConfig(
-    filename="errors.log", level=logging.ERROR, format="%(asctime)s %(message)s"
-)
+
+warning_handler = logging.FileHandler("warnings.log", mode="w")
+warning_handler.setLevel(logging.WARNING)
+warning_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+warning_handler.setFormatter(warning_formatter)
+
+logging.getLogger().addHandler(warning_handler)
+
 
 
 class ConfigManager:

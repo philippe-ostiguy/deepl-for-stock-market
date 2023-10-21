@@ -3,20 +3,20 @@ common :
   end_date : '2023-06-15'
   max_missing_data : .02
   fetching : False
-  preprocessing : False
-  engineering : False
+  preprocessing : True
+  engineering : True
   model_phase : 'train'
   min_nb_trades : 30
   train_test_split : [.8,.10,.10]
   correlation_threshold : .5
   min_validation_forecasts : 95
-  check_bell_shape : True
+  check_bell_shape : False
   make_data_stationary : True
-  test_performance : .4
+  test_performance : .5
   hyperparameters_optimization :
     is_pruning : True
     is_optimizing : True
-    nb_trials : 100
+    nb_trials : 5
 
 
   scaling: False
@@ -31,29 +31,29 @@ inputs:
   #    size: 100
     - source: 'av'
       data:
-#        - 'SPY'
+        - 'SPY'
 #        - 'set_dynamically_50_largest_stocks'
-#        - 'NATURAL_GAS'
-#        - '3month'
-#        - '10year'
-#        - '2year'
-#        - 'EUR'
-#        - 'WTI'
-#        - 'MSFT'
-#        - 'GOOGL'
-#        - 'AAPL'
+        - 'NATURAL_GAS'
+        - '3month'
+        - '10year'
+        - '2year'
+        - 'EUR'
+        - 'WTI'
+        - 'MSFT'
+        - 'GOOGL'
+        - 'AAPL'
         - 'AMZN'
     - source : 'fred'
       data:
 #        - 'set_dynamically'
-#        - 'T5YIE'
-#        - 'T10YIE'
-#        - 'DEXUSNZ'
+        - 'T5YIE'
+        - 'T10YIE'
+        - 'DEXUSNZ'
         - 'VIXCLS'
     - source : 'macrotrends'
       data :
 #         - 'set_dynamically'
-#         - 'wheat'
+         - 'wheat'
          - 'corn'
   future_covariates :
       data:
@@ -147,7 +147,7 @@ hyperparameters_optimization:
     epochs: 2
     gradient_clip_val : [.1,.5,1,5]
     likelihood: [0.05, 0.1, 0.3, 0.5, 0.7, 0.9, 0.95]
-    max_encoder_length: 8
+    max_encoder_length: 64
     max_prediction_length: 1
     batch_size: 128
     random_state: 42

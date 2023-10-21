@@ -32,6 +32,7 @@ from mean_reversion.config.config_utils import InitProject, ConfigManager
 from mean_reversion.factory import DataSourceFactory
 from mean_reversion.models.models import HyperpametersOptimizer, ModelBuilder
 import threading
+import torch
 import os
 
 if __name__ == "__main__":
@@ -56,10 +57,12 @@ if __name__ == "__main__":
     if config_manager.config['common']['hyperparameters_optimization']['is_optimizing']:
            HyperpametersOptimizer(config_manager).run()
 
-    ModelBuilder(config_manager).run()
+    #ModelBuilder(config_manager).run()
 
-    music_thread = threading.Thread(
-        target=os.system('afplay super-mario-bros.mp3'))
-    music_thread.start()
     print('Program finished successfully')
+    if torch.cuda.is_available():
+        music_thread = threading.Thread(
+            target=os.system('afplay super-mario-bros.mp3'))
+        music_thread.start()
+
 

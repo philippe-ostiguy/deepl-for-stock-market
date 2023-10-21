@@ -111,14 +111,15 @@ class BaseReturnMetricModel:
 
     def validation_step(self, batch, batch_idx):
         log = super().validation_step(batch, batch_idx)
-
+        batch_size = log['n_samples']
         prediction_batch, targets = batch
         preds = log.get("prediction", None)
         if preds is None:
             preds = self(prediction_batch)
 
         return_on_risk = self.portfolio_metric(preds, targets)
-        self.log('return_on_risk', return_on_risk, on_step=True, on_epoch=True)
+        print(f'batch_size : {batch_size}')
+        self.log('return_on_risk', return_on_risk, on_step=True, on_epoch=True, batch_size=batch_size)
 
         return self.log
 
