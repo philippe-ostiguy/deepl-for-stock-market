@@ -18,8 +18,6 @@ class PortfolioReturnMetric(Metric):
     def update(self, preds: torch.Tensor, target_tensors: tuple):
         targets_size = len(target_tensors)
         for item in range(targets_size+1):
-            if item == 0:
-                print('\n')
             print(f'current item in update() : {item}')
             target_tensor = target_tensors[0][item]
 
@@ -64,10 +62,8 @@ class PortfolioReturnMetric(Metric):
             else:
                 self.daily_returns[item] = torch.cat(
                     [self.daily_returns[item], daily_returns_tensor], dim=0)
-            if item == 0:
-                print('\n')
-            print(f'Nb of trade in update(): {len(self.daily_returns[item])}')
 
+            logging.warning(f'Nb of trade in update(): {len(self.daily_returns[item])}')
 
 
     def compute(self):
@@ -88,17 +84,21 @@ class PortfolioReturnMetric(Metric):
             all_metrics.append(metrics)
 
         if total_trades <= self._config['common']['min_nb_trades']:
-            print(
-                f'\nLow nb of trades in compute: {total_trades}')
+            logging.warning(
+                f'Low nb of trades in compute: {total_trades}')
             return torch.tensor(0.0)
         avg_weighted_return_on_risk = weighted_return_on_risks / total_trades
-        print(
-            f'\nWeighted return on risk in compute(): {avg_weighted_return_on_risk}')
+        if not torch.is_tensor(avg_weighted_return_on_risk):
+            avg_weighted_return_on_risk = torch.tensor(
+                avg_weighted_return_on_risk)
+
+        logging.warning(
+            f'Weighted return on risk in compute(): {avg_weighted_return_on_risk}')
         threshold_evaluation = 20
         if avg_weighted_return_on_risk > threshold_evaluation:
-            logging.warning(f"\nOn current epoch, avg_weighted_return_on_risk is "
+            logging.warning(f"On current epoch, avg_weighted_return_on_risk is "
                             f"higher than {threshold_evaluation}: {avg_weighted_return_on_risk}")
-            return 0
+            return torch.tensor(0.0)
         return avg_weighted_return_on_risk
 
 
@@ -118,7 +118,6 @@ class BaseReturnMetricModel:
             preds = self(prediction_batch)
 
         return_on_risk = self.portfolio_metric(preds, targets)
-        print(f'batch_size : {batch_size}')
         self.log('return_on_risk', return_on_risk, on_step=True, on_epoch=True, batch_size=batch_size)
 
         return self.log
@@ -134,8 +133,8 @@ class BaseReturnMetricModel:
             self.best_return_on_risk = aggregated_return_on_risk
             self.best_epoch = self.current_epoch
 
-        print(
-            f"\nBest Return on Risk so far: {self.best_return_on_risk}, achieved at epoch: {self.best_epoch}")
+        logging.warning(
+            f"Best Return on Risk so far: {self.best_return_on_risk}, achieved at epoch: {self.best_epoch}")
 
         self.validation_step_outputs.clear()
         self.portfolio_metric.reset()

@@ -60,7 +60,7 @@ if __name__ == "__main__":
     #ModelBuilder(config_manager).run()
 
     print('Program finished successfully')
-    if torch.cuda.is_available():
+    if not torch.cuda.is_available():
         music_thread = threading.Thread(
             target=os.system('afplay super-mario-bros.mp3'))
         music_thread.start()

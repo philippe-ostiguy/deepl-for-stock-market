@@ -470,7 +470,6 @@ class ModelBuilder(BaseModelBuilder):
             self._obtain_data()
             self._model_name = model
             self._assign_data_models()
-            self._intialize_training_variables()
             self._obtain_dataloader()
             self._model_dir = f'models/{self._model_name}'
             self._clean_directory()
@@ -730,29 +729,30 @@ class HyperpametersOptimizer(BaseModelBuilder):
         n_trials = self._config['common']['hyperparameters_optimization'][
             'nb_trials']
 
-
         self._current_hyperparameters = {}
         for model in self._config["hyperparameters_optimization"]["models"]:
             self._current_hyperparameters['model'] = {}
             self._model_suggested_type = \
                 self._config_manager.get_model_suggest_type(model)
             self._model_name = model
-            optuna_storage = 'last_study.db'
+            optuna_storage = model + '_last_study.db'
             self._model_dir = f'models/hyperparameters_optimization/{self._model_name}'
             self._clean_directory(exclusions=[optuna_storage])
+            if not self._config['common']['hyperparameters_optimization']['is_using_prev_study']:
+                if os.path.exists(os.path.join(self._model_dir, optuna_storage)):
+                        os.remove(os.path.join(self._model_dir, optuna_storage))
+
             if self._config['common']['hyperparameters_optimization'][
                 'is_pruning']:
 
                 pruner = optuna.pruners.MedianPruner(n_startup_trials=5,
                                                      n_warmup_steps=5,
-                                                     interval_steps=5)
+                                                     interval_steps=3)
 
             else:
                 pruner = None
             sampler = optuna.samplers.TPESampler()
             storage_name = f"sqlite:///{os.path.join(self._model_dir, optuna_storage)}"
-            if os.path.exists(os.path.join(self._model_dir, optuna_storage)):
-                    os.remove(os.path.join(self._model_dir, optuna_storage))
 
             try :
                 study = optuna.load_study(pruner = pruner,
@@ -760,6 +760,7 @@ class HyperpametersOptimizer(BaseModelBuilder):
                                             storage= storage_name,
                                             sampler=sampler)
                 n_trials -= len(study.trials)
+                logging.warning(f"Using study {storage_name} in {optuna_storage}")
 
             except KeyError as key_error:
                 logging.warning(f"Study name doesn't exists: {key_error}")
@@ -813,28 +814,11 @@ class HyperpametersOptimizer(BaseModelBuilder):
         best_value = checkpoint["callbacks"][model_checkpoint_key][
             'best_model_score'].item()
 
-        print(f'current best return on risk : {best_value}')
-
-
-            self._reset_objective()
-            return best_value
-
-        self._best_model = self._model_to_train.load_from_checkpoint(
-            f"{self._model_dir}/{self._extra_dirpath}/best_model.ckpt")
-
-        self._coordinate_metrics_calculation(self._test_dataloader,self._test_data, 'test',False)
+        print(f'current best return on risk for trial {self._current_trial} : {best_value}')
 
         self._reset_objective()
-
-        print(f'Current test return on risk {self._aggregated_return_on_risk}')
-        if best_value * self._config['common']['test_performance'] > self._aggregated_return_on_risk:
-            return 0
-        print(f'\nNb of trades on test set {sum(self._nb_trades)}')
-        if sum(self._nb_trades) <= self._config['common']['min_nb_trades']:
-            print(f'\nLow nb of trades on test set {sum(self._nb_trades)}')
-            return 0
-
         return best_value
+
 
     def _reset_objective(self) :
         shutil.rmtree(f"{self._model_dir}/{self._extra_dirpath}")
@@ -867,6 +851,7 @@ class HyperpametersOptimizer(BaseModelBuilder):
         self._upper_index = self._params['likelihood'].index(self._params['confidence_level'])
         self._lower_index = self._params['likelihood'].index(1 - self._params['confidence_level'])
         self._values_retriever.confidence_indexes = (self._lower_index,self._upper_index)
+
 
     def _assign_hyperparameters(self, trial: optuna.Trial) -> dict:
         hyperparameters_value = {}
