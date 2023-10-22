@@ -17,8 +17,7 @@ common :
     is_pruning : True
     is_optimizing : True
     nb_trials : 100
-    is_using_prev_study : False
-
+    is_using_prev_study : True
 
   scaling: False
   metrics_to_choose_model :
