@@ -55,7 +55,6 @@ class BaseModelBuilder(ABC):
         self._logger = None
         self._model_name = ''
         self._values_retriever = values_retriver
-        self._extra_dirpath = ''
         self._lower_index = ''
         self._upper_index = ''
         self._best_model : Optional[BaseModelWithCovariates] = ''
@@ -720,10 +719,7 @@ class HyperpametersOptimizer(BaseModelBuilder):
         self._config = config_manager.config
         #self._lightning_logs_dir = 'lightning_logs/model_optimization'
         self._params_to_optimized = self._assign_params(hyperparameters_phase='hyperparameters_optimization')
-
         self._model_suggested_type = {}
-        self._current_trial = 0
-        self._extra_dirpath = 'trial_v' + str(self._current_trial)
 
     def run(self):
         n_trials = self._config['common']['hyperparameters_optimization'][
@@ -745,13 +741,13 @@ class HyperpametersOptimizer(BaseModelBuilder):
             if self._config['common']['hyperparameters_optimization'][
                 'is_pruning']:
 
-                pruner = optuna.pruners.MedianPruner(n_startup_trials=5,
+                pruner = optuna.pruners.MedianPruner(n_startup_trials=3,
                                                      n_warmup_steps=5,
                                                      interval_steps=3)
 
             else:
                 pruner = None
-            sampler = optuna.samplers.TPESampler()
+            sampler = optuna.samplers.TPESampler(seed=42)
             storage_name = f"sqlite:///{os.path.join(self._model_dir, optuna_storage)}"
 
             try :
@@ -781,6 +777,7 @@ class HyperpametersOptimizer(BaseModelBuilder):
 
 
     def _objective(self, trial: optuna.Trial):
+        self._extra_dirpath = 'trial_v' + str(trial.number)
         self._obtain_data()
         self._assign_data_models()
         self._initialize_training_variables()
@@ -814,16 +811,13 @@ class HyperpametersOptimizer(BaseModelBuilder):
         best_value = checkpoint["callbacks"][model_checkpoint_key][
             'best_model_score'].item()
 
-        print(f'current best return on risk for trial {self._current_trial} : {best_value}')
+        logging.warning(f'current best return on risk for trial {trial.number} : {best_value}')
+        if os.path.exists(f"{self._model_dir}/{self._extra_dirpath}"):
+            shutil.rmtree(f"{self._model_dir}/{self._extra_dirpath}")
 
-        self._reset_objective()
         return best_value
 
 
-    def _reset_objective(self) :
-        shutil.rmtree(f"{self._model_dir}/{self._extra_dirpath}")
-        self._current_trial += 1
-        self._extra_dirpath = 'trial_v' + str(self._current_trial)
 
     @staticmethod
     def _find_closest_value(lst, K, exclude):

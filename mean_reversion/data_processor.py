@@ -149,6 +149,46 @@ class DataProcessorHelper:
         ).astype(np.float32)
 
 
+#
+# import pandas as pd
+# from sklearn.preprocessing import StandardScaler
+# from sklearn.decomposition import PCA
+#
+# # Assume train_features and test_features are your training and testing data excluding the target variable
+# scaler = StandardScaler()
+# scaler.fit(train_features)  # Fit the scaler only on the training data
+#
+# # Standardize both training and test data
+# scaled_train_features = scaler.transform(train_features)
+# scaled_test_features = scaler.transform(test_features)
+#
+# # Fit PCA on the training data
+# pca = PCA()
+# pca.fit(scaled_train_features)
+#
+# # Examine the explained variance ratio for each component
+# explained_variance_ratio = pca.explained_variance_ratio_
+# cumulative_explained_variance = explained_variance_ratio.cumsum()
+#
+# # Determine the number of components to keep to retain 95% of the variance
+# n_components = (cumulative_explained_variance < 0.95).sum() + 1  # +1 as indices start from 0
+#
+# # Re-fit PCA on the training data specifying the number of components to keep
+# pca = PCA(n_components=n_components)
+# pca.fit(scaled_train_features)
+#
+# # Transform both training and test data
+# principalComponents_train = pca.transform(scaled_train_features)
+# principalComponents_test = pca.transform(scaled_test_features)
+#
+# # Convert the principal components to DataFrames
+# principalDf_train = pd.DataFrame(data=principalComponents_train, columns=[f'Principal Component {i}' for i in range(1, n_components + 1)])
+# principalDf_test = pd.DataFrame(data=principalComponents_test, columns=[f'Principal Component {i}' for i in range(1, n_components + 1)])
+
+# Now, 'principalDf_train' and 'principalDf_test' are your new sets of features for training and testing, respectively
+
+
+
 class DataForModelSelector:
     def __init__(self, config_manager: ConfigManager):
         self._config = config_manager.config
