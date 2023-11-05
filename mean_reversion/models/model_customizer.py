@@ -8,6 +8,8 @@ import logging
 class PortfolioReturnMetric(Metric):
     higher_is_better = True
     full_state_update = True
+    update_count = 0
+
     def __init__(self, dist_sync_on_step=True, values_retriever = ModelValueRetriver(), config_manager = ConfigManager()):
         super().__init__(dist_sync_on_step=dist_sync_on_step)
 
@@ -16,8 +18,14 @@ class PortfolioReturnMetric(Metric):
         self.add_state("daily_returns", default=[], dist_reduce_fx="cat")
 
     def update(self, preds: torch.Tensor, target_tensors: tuple):
-        targets_size = len(target_tensors)
-        for item in range(targets_size+1):
+        PortfolioReturnMetric.update_count += 1
+
+        if PortfolioReturnMetric.update_count > 1:
+            if self.daily_returns:
+                raise ValueError("Daily returns should be an empty list or a tensor with value 0")
+
+        targets_size = len(target_tensors[0])
+        for item in range(targets_size):
             print(f'current item in update() : {item}')
             target_tensor = target_tensors[0][item]
 

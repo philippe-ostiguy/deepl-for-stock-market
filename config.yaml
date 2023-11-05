@@ -19,7 +19,7 @@ common :
   hyperparameters_optimization :
     is_pruning : True
     is_optimizing : False
-    nb_trials : 47
+    nb_trials : 30
     is_using_prev_study : True
 
   scaling: False
@@ -35,29 +35,29 @@ inputs:
     - source: 'av'
       data:
         - 'SPY'
-#        - 'set_dynamically_50_largest_stocks'
-#        - 'NATURAL_GAS'
-#        - '3month'
-#        - '10year'
-#        - '2year'
-#        - 'EUR'
-#        - 'WTI'
-#        - 'MSFT'
-#        - 'GOOGL'
-#        - 'AAPL'
-#        - 'AMZN'
-#    - source : 'fred'
-#      data:
-#        - 'set_dynamically'
-#        - 'T5YIE'
-#        - 'T10YIE'
-#        - 'DEXUSNZ'
-#        - 'VIXCLS'
-#    - source : 'macrotrends'
-#      data :
-#         - 'set_dynamically'
-#         - 'wheat'
-#         - 'corn'
+        - 'set_dynamically_50_largest_stocks'
+        - 'NATURAL_GAS'
+        - '3month'
+        - '10year'
+        - '2year'
+        - 'EUR'
+        - 'WTI'
+        - 'MSFT'
+        - 'GOOGL'
+        - 'AAPL'
+        - 'AMZN'
+    - source : 'fred'
+      data:
+        - 'set_dynamically'
+        - 'T5YIE'
+        - 'T10YIE'
+        - 'DEXUSNZ'
+        - 'VIXCLS'
+    - source : 'macrotrends'
+      data :
+         - 'set_dynamically'
+         - 'wheat'
+         - 'corn'
   future_covariates :
       data:
         - 'day'
@@ -68,19 +68,16 @@ output :
     data :
       - 'SPY'
       - 'EUR'
-  - source : 'macrotrends'
-    data :
-      - 'corn'
-
+      - 'AAPL'
 
 hyperparameters:
   common:
     confidence_level : .7
     batch_size: 128
-    epochs: 2
-    num_loader_workers : 4
+    epochs: 1
+    num_loader_workers : 2
     random_state: 42
-    gradient_clip_val : .5
+    gradient_clip_val : 1
     optimizer : "Ranger"
 #    optimizer_kwargs: {"lr": 0.001}
 #    lr_scheduler_cls: ""
@@ -91,12 +88,12 @@ hyperparameters:
 #      anneal_strategy: "linear"
 #      cycle_momentum: False
     likelihood: [0.05, 0.1, 0.3, 0.5, 0.7, 0.9, 0.95]
-    max_encoder_length: 16
+    max_encoder_length: 64
     max_prediction_length: 1
     callbacks :
       EarlyStopping :
         monitor : 'val_PortfolioReturnMetric'
-        patience : 30
+        patience : 20
         verbose : False
         mode : 'max'
       ModelCheckPoint :
@@ -116,7 +113,7 @@ hyperparameters:
       hidden_size: 16
       lstm_layers : 1
       attention_head_size: 1
-      dropout: 0.1
+      dropout: 0.2
       hidden_continuous_size: 16
       #reduce_on_plateau_patience: 5
       outputsize : 7

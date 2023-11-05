@@ -795,14 +795,8 @@ class OutputDataEngineering(BaseInputOutputDataEngineering):
             self._engineered_data['4. close']
             / self._engineered_data["1. open"]
         ) - 1
-
-        elif 'value' in self._engineered_data.columns :
-            self._engineered_data[target_column] \
-                = (self._engineered_data['value']/
-                   self._engineered_data["value"].shift(1)) - 1
-            self._engineered_data.iloc[0] = 0
         else :
-            raise ValueError('Columns most have open and close name or value name')
+            raise ValueError('Columns most have open and close name')
 
         self._engineered_data =\
             self._data_processor_helper.remove_first_transformed_data(

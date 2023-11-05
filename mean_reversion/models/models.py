@@ -512,10 +512,10 @@ class ModelBuilder(BaseModelBuilder):
                 self._assign_best_hyperparams()
 
             self._obtain_dataloader()
-            # self._train_model(self._config_manager.hyperparameters)
+            self._train_model(self._config_manager.hyperparameters)
             self._obtain_best_model()
-            # self._coordinate_evaluation()
-            # self._save_metrics_from_tensorboardflow()
+            self._coordinate_evaluation()
+            self._save_metrics_from_tensorboardflow()
             self._coordinate_interpretions()
             self._save_run_information()
             self._coordinate_select_best_model()
