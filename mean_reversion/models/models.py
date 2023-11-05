@@ -28,7 +28,7 @@ import glob
 import copy
 import optuna
 import pickle
-from abc import ABC, abstractmethod
+from abc import ABC
 import logging
 import torch
 
@@ -58,6 +58,8 @@ class BaseModelBuilder(ABC):
         self._lower_index = ''
         self._upper_index = ''
         self._best_model : Optional[BaseModelWithCovariates] = ''
+        self._extra_dirpath = ''
+        self._model_to_train = ''
 
 
     def _assign_params(self, hyperparameters_phase : Optional[str] = 'hyperparameters'):
@@ -71,6 +73,40 @@ class BaseModelBuilder(ABC):
             else :
                 params[item] = None
         return params
+
+    @staticmethod
+    def _find_closest_value(lst, K, exclude):
+        return min((abs(val - K), val) for val in lst if val not in exclude)[1]
+
+    def _adjust_likelihood(self):
+        if 'likelihood' in self._params and 'confidence_level' in self._params and \
+                self._params['confidence_level'] != 0.5 and (
+                self._params['confidence_level']
+                not in self._params['likelihood'] or (
+                        1 - self._params['confidence_level'])
+                not in self._params['likelihood']):
+            to_remove_1 = self._find_closest_value(self._params['likelihood'],
+                                                   self._params[
+                                                       'confidence_level'],
+                                                   exclude=[0.5])
+            self._params['likelihood'].remove(to_remove_1)
+
+            to_remove_2 = self._find_closest_value(self._params['likelihood'],
+                                                   1 - self._params[
+                                                       'confidence_level'],
+                                                   exclude=[0.5])
+            self._params['likelihood'].remove(to_remove_2)
+            self._params['likelihood'].append(self._params['confidence_level'])
+            self._params['likelihood'].append(
+                1 - self._params['confidence_level'])
+
+        self._params['likelihood'].sort()
+        self._upper_index = self._params['likelihood'].index(
+            self._params['confidence_level'])
+        self._lower_index = self._params['likelihood'].index(
+            1 - self._params['confidence_level'])
+        self._values_retriever.confidence_indexes = (
+        self._lower_index, self._upper_index)
 
     def _clean_directory(self, exclusions : Optional[list] = None):
         clear_directory_content(self._model_dir, exclusions)
@@ -203,8 +239,8 @@ class BaseModelBuilder(ABC):
         for callback in callbacks:
             if isinstance(callback,
                           ModelCheckpoint):
-                self._model_checkpoint = copy.deepcopy(callback)
-                callbacks_list.append(callback)
+                self._model_checkpoint = callback
+                callbacks_list.append(self._model_checkpoint)
             if isinstance(callback,
                           EarlyStopping):
                 callbacks_list.append(copy.deepcopy(callback))
@@ -285,11 +321,10 @@ class BaseModelBuilder(ABC):
 
             actual_value = self._raw_predictions.y[0][self._target_item][index].item()
 
-            if not self._config["common"][
-                "make_data_stationary"] and index == 0:
+            if not self._config["common"]["features_engineering"]["make_data_stationary"] and index == 0:
                 continue
 
-            if not self._config["common"]["make_data_stationary"]:
+            if not self._config["common"]["features_engineering"]["make_data_stationary"]:
                 actual_return = (actual_value / self._raw_predictions.y[0][self._target_item][
                     index - 1].item()) - 1
                 median_pred_return = (median_pred_value / self._raw_predictions.y[0][self._target_item][
@@ -458,7 +493,7 @@ class ModelBuilder(BaseModelBuilder):
         self._config_manager = config_manager
         self._config = self._config_manager.config
         self._params = self._assign_params()
-
+        self._initialize_training_variables()
         self._lightning_logs_dir = 'lightning_logs'
         self._lower_index, self._upper_index = self._values_retriever.confidence_indexes
 
@@ -469,44 +504,51 @@ class ModelBuilder(BaseModelBuilder):
             self._obtain_data()
             self._model_name = model
             self._assign_data_models()
-            self._obtain_dataloader()
             self._model_dir = f'models/{self._model_name}'
             self._clean_directory()
             self._model_to_train =  CUSTOM_MODEL[self._model_name]
-            self._train_model(self._config_manager.hyperparameters)
+            if self._config['common']['hyperparameters_optimization'][
+                'is_optimizing']:
+                self._assign_best_hyperparams()
+
+            self._obtain_dataloader()
+            # self._train_model(self._config_manager.hyperparameters)
             self._obtain_best_model()
-            self._coordinate_evaluation()
-            self._save_metrics_from_tensorboardflow()
+            # self._coordinate_evaluation()
+            # self._save_metrics_from_tensorboardflow()
             self._coordinate_interpretions()
             self._save_run_information()
             self._coordinate_select_best_model()
 
+    def _assign_best_hyperparams(self):
+        optimized_model_path = self._model_dir.replace('models/','models/hyperparameters_optimization/')
+        with open(f"{optimized_model_path}/best_study.pkl",
+                'rb') as file:
+            best_hyper_params = pickle.load(file)
+        default_hypers = copy.deepcopy(self._config_manager.hyperparameters[self._model_name])
+        default_params = copy.deepcopy(self._params)
+        for hyper, value in default_params.items():
+            if hyper in best_hyper_params.best_params:
+                self._params[hyper] = best_hyper_params.best_params[hyper]
+
+        self._adjust_likelihood()
+        for hyper,value in default_hypers.items():
+            if hyper in best_hyper_params.best_params:
+                if hyper == 'loss':
+                    self._config_manager.hyperparameters[self._model_name][hyper] = ConfigManager.assign_loss_fct(best_hyper_params.best_params,self._params)['loss']
+                else :
+                    self._config_manager.hyperparameters[self._model_name][hyper] = best_hyper_params.best_params[hyper]
+
     def _obtain_best_model(self):
-        best_model_path = self._model_checkpoint.best_model_path
-        self._best_model = self._model_to_train.load_from_checkpoint(best_model_path)
-        #self._best_model = self._model_to_train.load_from_checkpoint('tempo/TemporalFusionTransformer/best_model.ckpt')
+        #best_model_path = self._model_checkpoint.best_model_path
+        #self._best_model = self._model_to_train.load_from_checkpoint(best_model_path)
+        self._best_model = self._model_to_train.load_from_checkpoint('tempo/best_model.ckpt')
 
 
     def _coordinate_interpretions(self):
         if "TemporalFusionTransformer" in self._model_name:
             self._interpret_features_importance()
-        self._interpret_features_sensitivity()
 
-
-    def _interpret_features_sensitivity(self):
-
-        raw_predictions = self._best_model.predict(self._predict_dataloader,
-                                           return_x=True)
-        predictions_vs_actuals = self._best_model.calculate_prediction_actual_by_variable(
-            raw_predictions.x, raw_predictions.output)
-        features_sensitivity_path = f'{self._model_dir}/features_sensitivity'
-        os.makedirs(features_sensitivity_path, exist_ok=True)
-        try :
-            self._save_multiple_interprations_plot(predictions_vs_actuals,
-                                                   features_sensitivity_path,
-                                                   self._best_model.plot_prediction_actual_by_variable)
-        except :
-            pass
 
     def _interpret_features_importance(self):
         raw_predictions = self._best_model.predict(self._predict_dataloader,
@@ -733,7 +775,7 @@ class HyperpametersOptimizer(BaseModelBuilder):
             self._model_name = model
             optuna_storage = model + '_last_study.db'
             self._model_dir = f'models/hyperparameters_optimization/{self._model_name}'
-            self._clean_directory(exclusions=[optuna_storage])
+            self._clean_directory(exclusions=[optuna_storage,'best_study.pkl'])
             if not self._config['common']['hyperparameters_optimization']['is_using_prev_study']:
                 if os.path.exists(os.path.join(self._model_dir, optuna_storage)):
                         os.remove(os.path.join(self._model_dir, optuna_storage))
@@ -767,12 +809,13 @@ class HyperpametersOptimizer(BaseModelBuilder):
                                             storage= storage_name,
                                             sampler=sampler,
                                             load_if_exists=True)
+            if n_trials > 0 :
+                study.optimize(self._objective, n_trials=n_trials,show_progress_bar=True)
 
-            study.optimize(self._objective, n_trials=n_trials,show_progress_bar=True)
+                with open(f"{self._model_dir}/best_study.pkl", "wb") as fout:
+                    pickle.dump(study, fout)
+                print(study.best_params)
 
-            with open(f"{self._model_dir}/best_study.pkl", "wb") as fout:
-                pickle.dump(study, fout)
-            print(study.best_params)
             self._values_retriever.confidence_indexes = ''
 
 
@@ -818,33 +861,13 @@ class HyperpametersOptimizer(BaseModelBuilder):
         return best_value
 
 
-
-    @staticmethod
-    def _find_closest_value(lst, K, exclude):
-        return min((abs(val - K), val) for val in lst if val not in exclude)[1]
+    def _adjust_loss_fct(self):
+        self._current_hyperparameters[self._model_name]['loss'] = ConfigManager.assign_loss_fct(self._current_hyperparameters[self._model_name],self._params)['loss']
 
 
     def _adjust_hyperparameters(self):
-        if 'likelihood' in self._params and 'confidence_level' in self._params and\
-                self._params['confidence_level'] != 0.5 and (self._params['confidence_level']
-                not in self._params['likelihood'] or (1-self._params['confidence_level'])
-                not in self._params['likelihood']):
-            to_remove_1 = self._find_closest_value(self._params['likelihood'], self._params['confidence_level'],
-                                  exclude=[0.5])
-            self._params['likelihood'].remove(to_remove_1)
-
-            to_remove_2 = self._find_closest_value(self._params['likelihood'], 1 - self._params['confidence_level'],
-                                  exclude=[0.5])
-            self._params['likelihood'].remove(to_remove_2)
-            self._params['likelihood'].append(self._params['confidence_level'])
-            self._params['likelihood'].append(1 - self._params['confidence_level'])
-
-        self._params['likelihood'].sort()
-
-        self._current_hyperparameters[self._model_name]['loss'] = ConfigManager.assign_loss_fct(self._current_hyperparameters[self._model_name],self._params)['loss']
-        self._upper_index = self._params['likelihood'].index(self._params['confidence_level'])
-        self._lower_index = self._params['likelihood'].index(1 - self._params['confidence_level'])
-        self._values_retriever.confidence_indexes = (self._lower_index,self._upper_index)
+        self._adjust_loss_fct()
+        self._adjust_likelihood()
 
 
     def _assign_hyperparameters(self, trial: optuna.Trial) -> dict:

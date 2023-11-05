@@ -35,7 +35,7 @@ class PortfolioReturnMetric(Metric):
             target = target_tensor.squeeze().tolist()
 
 
-            if not self._config["common"]["make_data_stationary"]:
+            if not self._config["common"]["features_engineering"]["make_data_stationary"]:
                 former_target = target
                 target = [(target[i] / target[i - 1]) -1 for i in range(1, len(target))]
 

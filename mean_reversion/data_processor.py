@@ -50,6 +50,8 @@ from contextlib import suppress
 from darts import TimeSeries
 import matplotlib.pyplot as plt
 import scipy.stats as stats
+from sklearn.decomposition import PCA
+
 load_dotenv()
 
 from mean_reversion.config.config_utils import ConfigManager
@@ -147,45 +149,6 @@ class DataProcessorHelper:
         self._test_time_series = TimeSeries.from_dataframe(
             self.obtain_test_data(self._data_to_write_ts), freq="B"
         ).astype(np.float32)
-
-
-#
-# import pandas as pd
-# from sklearn.preprocessing import StandardScaler
-# from sklearn.decomposition import PCA
-#
-# # Assume train_features and test_features are your training and testing data excluding the target variable
-# scaler = StandardScaler()
-# scaler.fit(train_features)  # Fit the scaler only on the training data
-#
-# # Standardize both training and test data
-# scaled_train_features = scaler.transform(train_features)
-# scaled_test_features = scaler.transform(test_features)
-#
-# # Fit PCA on the training data
-# pca = PCA()
-# pca.fit(scaled_train_features)
-#
-# # Examine the explained variance ratio for each component
-# explained_variance_ratio = pca.explained_variance_ratio_
-# cumulative_explained_variance = explained_variance_ratio.cumsum()
-#
-# # Determine the number of components to keep to retain 95% of the variance
-# n_components = (cumulative_explained_variance < 0.95).sum() + 1  # +1 as indices start from 0
-#
-# # Re-fit PCA on the training data specifying the number of components to keep
-# pca = PCA(n_components=n_components)
-# pca.fit(scaled_train_features)
-#
-# # Transform both training and test data
-# principalComponents_train = pca.transform(scaled_train_features)
-# principalComponents_test = pca.transform(scaled_test_features)
-#
-# # Convert the principal components to DataFrames
-# principalDf_train = pd.DataFrame(data=principalComponents_train, columns=[f'Principal Component {i}' for i in range(1, n_components + 1)])
-# principalDf_test = pd.DataFrame(data=principalComponents_test, columns=[f'Principal Component {i}' for i in range(1, n_components + 1)])
-
-# Now, 'principalDf_train' and 'principalDf_test' are your new sets of features for training and testing, respectively
 
 
 
@@ -290,10 +253,10 @@ class DataForModelSelector:
                         how="left",
                     )
 
-        if self._config["common"]["model_phase"] == "train":
-            self._make_correlated_feature_removal()
-        else:
-            self._apply_correlated_feature_removal()
+
+
+        if self._config["common"]["model_phase"] == "train" and self._config["common"]["features_engineering"]["is_using_pca"]:
+            self._make_features_removal()
 
         write_to_csv_formatted(
             self._data_for_model_train,
@@ -317,64 +280,39 @@ class DataForModelSelector:
             'time'
         )
 
-    def _make_correlated_feature_removal(self) -> None:
-        corr_matrix = self._data_for_model_train.corr().abs()
-        corr_sum = pd.DataFrame(
-            {"sum": corr_matrix.sum(), "col": corr_matrix.columns}
-        )
-        corr_sum_sorted = corr_sum.sort_values("sum", ascending=False)
+    def _make_features_removal(self) -> None:
+        self._train_time_data = self._data_for_model_train['time']
+        self._test_time_data = self._data_for_model_test['time']
+        self._predict_time_data = self._data_for_model_predict['time']
+        self._data_for_model_train = self._data_for_model_train.drop('time',axis=1)
+        self._data_for_model_test = self._data_for_model_test.drop('time', axis=1)
+        self._data_for_model_predict = self._data_for_model_predict.drop('time', axis=1)
 
-        to_keep = ["time"]
+        pca = PCA()
+        pca.fit(self._data_for_model_train)
+        pca_variance = self._config["common"]["features_engineering"]["pca_variance"]
 
-        for _, row in corr_sum_sorted.iterrows():
-            column = row["col"]
-            if column == "time":
-                continue
-            if all(
-                corr_matrix[column][to_keep]
-                <= self._config["common"]["correlation_threshold"]
-            ):
-                to_keep.append(column)
+        n_components = sum(pca.explained_variance_ratio_.cumsum() <= pca_variance) + 1
+        principal_components_train = pca.transform(self._data_for_model_train)[:,
+                                    :n_components]
+        principal_components_test = pca.transform(self._data_for_model_test)[:,
+                                    :n_components]
+        principal_components_predict = pca.transform(self._data_for_model_predict)[:,
+                                    :n_components]
 
-        with open(
-            self._config["inputs"]["past_covariates"]["common"]["pickle"][
-                "features_to_keep"
-            ],
-            "wb",
-        ) as f:
-            pickle.dump(to_keep, f)
+        self._data_for_model_train = pd.DataFrame(data=principal_components_train,
+                                         columns=[f"PC{i+1}" for i in range(n_components)])
 
-        self._raise_error_if_missing_columns(
-            to_keep, self._data_for_model_train, "training data"
-        )
-        self._raise_error_if_missing_columns(
-            to_keep, self._data_for_model_predict, "prediction data"
-        )
-        self._raise_error_if_missing_columns(
-            to_keep, self._data_for_model_test, "test data"
-        )
+        self._data_for_model_test= pd.DataFrame(data=principal_components_test,
+                                        columns=[f"PC{i+1}" for i in range(n_components)])
+        self._data_for_model_predict= pd.DataFrame(data=principal_components_predict,
+                                        columns=[f"PC{i+1}" for i in range(n_components)])
 
-        self._data_for_model_train = self._data_for_model_train[to_keep]
-        self._data_for_model_predict = self._data_for_model_predict[to_keep]
-        self._data_for_model_test= self._data_for_model_test[to_keep]
+        self._data_for_model_train['time'] = self._train_time_data.reset_index(drop=True)
+        self._data_for_model_test['time'] = self._test_time_data.reset_index(drop=True)
+        self._data_for_model_predict['time'] = self._predict_time_data.reset_index(drop=True)
 
-    def _apply_correlated_feature_removal(self) -> None:
-        with open(
-            self._config["inputs"]["past_covariates"]["common"]["pickle"][
-                "features_to_keep"
-            ],
-            "rb",
-        ) as f:
-            to_keep = pickle.load(f)
-        self._raise_error_if_missing_columns(
-            to_keep, self._data_for_model_predict, "prediction data"
-        )
-        self._raise_error_if_missing_columns(
-            to_keep, self._data_for_model_test, "test data"
-        )
-        self._data_for_model_predict = self._data_for_model_predict[to_keep]
-        self._data_for_model_train = self._data_for_model_train[to_keep]
-        self._data_for_model_test = self._data_for_model_test[to_keep]
+
     @staticmethod
     def _load_and_prefix_data(
         file_path: str,
@@ -396,15 +334,6 @@ class DataForModelSelector:
             data = data.add_prefix(f"{asset_name}_")
         return data
 
-    @staticmethod
-    def _raise_error_if_missing_columns(
-        columns_to_keep: List[str], data: pd.DataFrame, data_name: str
-    ) -> None:
-        missing_columns = set(columns_to_keep) - set(data.columns)
-        if missing_columns:
-            raise KeyError(
-                f"Columns not found in {data_name}: {missing_columns}"
-            )
 
 
 class BaseInputOutputDataEngineering(ABC):
@@ -539,7 +468,7 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
 
     def coordinate_stationarity(self, data: pd.Series) -> Optional[str]:
         valid_transformations = []
-        if not self._processor._config["common"]["make_data_stationary"] :
+        if not self._processor._config["common"]["features_engineering"]["make_data_stationary"] :
             return "identity"
         for name, transform_function in self._transformations:
             transformed_data = transform_function(data)
@@ -554,7 +483,7 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
             if p_value < 0.05:
                 skewness = stats.skew(transformed_data)
                 kurtosis = stats.kurtosis(transformed_data)
-                if not self._processor._config["common"]["check_bell_shape"]:
+                if not self._processor._config["common"]["features_engineering"]["check_bell_shape"]:
                     valid_transformations.append(
                         (name, p_value, skewness, kurtosis))
 
@@ -632,7 +561,7 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
                                       if col != RAW_ATTRIBUTES[0]]
 
         if self._transformed_columns :
-            if self._processor._config["common"]["scaling"]:
+            if self._processor._config["common"]["scaling"] or self._processor._config["common"]["features_engineering"]["is_using_pca"]:
                 self._dispatch_feature_engineering("data_scaling")
             self._data_processor_helper.data_to_write_ts = self._engineered_data
 
@@ -852,7 +781,7 @@ class OutputDataEngineering(BaseInputOutputDataEngineering):
         )
 
         target_column = (self._processor._config["data"][self._processor._current_data_index]['asset'] + '_target').lower()
-        if not self._processor._config["common"]["make_data_stationary"]:
+        if not self._processor._config["common"]["features_engineering"]["make_data_stationary"]:
             if '4. close' in self._engineered_data.columns:
                 self._engineered_data[target_column] = self._engineered_data['4. close']
             elif 'value' in self._engineered_data.columns:
@@ -1204,8 +1133,6 @@ class FutureCovariatesProcessor:
 
     def _scale(self, feature: str, data: pd.Series, fit: bool) -> pd.Series:
 
-        if not self._config["common"]["scaling"]:
-            return data
         data_reshaped = data.values.reshape(-1, 1)
         if fit :
             self._scaler[feature] = MinMaxScaler()

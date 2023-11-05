@@ -55,9 +55,9 @@ if __name__ == "__main__":
         ).run()
     DataForModelSelector(config_manager).run()
     if config_manager.config['common']['hyperparameters_optimization']['is_optimizing']:
-           HyperpametersOptimizer(config_manager).run()
+            HyperpametersOptimizer(config_manager).run()
 
-    #ModelBuilder(config_manager).run()
+    ModelBuilder(config_manager).run()
 
     print('Program finished successfully')
     if not torch.cuda.is_available():

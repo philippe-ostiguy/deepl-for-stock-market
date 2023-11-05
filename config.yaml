@@ -8,15 +8,18 @@ common :
   model_phase : 'train'
   min_nb_trades : 30
   train_test_split : [.8,.10,.10]
-  correlation_threshold : .5
   min_validation_forecasts : 95
-  check_bell_shape : False
-  make_data_stationary : True
   test_performance : .5
+  features_engineering :
+    check_bell_shape: False
+    make_data_stationary: True
+    pca_variance : .95
+    is_using_pca : True
+
   hyperparameters_optimization :
     is_pruning : True
-    is_optimizing : True
-    nb_trials : 100
+    is_optimizing : False
+    nb_trials : 47
     is_using_prev_study : True
 
   scaling: False
@@ -33,28 +36,28 @@ inputs:
       data:
         - 'SPY'
 #        - 'set_dynamically_50_largest_stocks'
-        - 'NATURAL_GAS'
-        - '3month'
-        - '10year'
-        - '2year'
-        - 'EUR'
-        - 'WTI'
-        - 'MSFT'
-        - 'GOOGL'
-        - 'AAPL'
-        - 'AMZN'
-    - source : 'fred'
-      data:
+#        - 'NATURAL_GAS'
+#        - '3month'
+#        - '10year'
+#        - '2year'
+#        - 'EUR'
+#        - 'WTI'
+#        - 'MSFT'
+#        - 'GOOGL'
+#        - 'AAPL'
+#        - 'AMZN'
+#    - source : 'fred'
+#      data:
 #        - 'set_dynamically'
-        - 'T5YIE'
-        - 'T10YIE'
-        - 'DEXUSNZ'
-        - 'VIXCLS'
-    - source : 'macrotrends'
-      data :
+#        - 'T5YIE'
+#        - 'T10YIE'
+#        - 'DEXUSNZ'
+#        - 'VIXCLS'
+#    - source : 'macrotrends'
+#      data :
 #         - 'set_dynamically'
-         - 'wheat'
-         - 'corn'
+#         - 'wheat'
+#         - 'corn'
   future_covariates :
       data:
         - 'day'
@@ -74,7 +77,7 @@ hyperparameters:
   common:
     confidence_level : .7
     batch_size: 128
-    epochs: 300
+    epochs: 2
     num_loader_workers : 4
     random_state: 42
     gradient_clip_val : .5
