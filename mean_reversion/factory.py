@@ -5,7 +5,6 @@ from mean_reversion.data_processor import (
     AlphaVantage,
     FRED,
     MacroTrends,
-    Reddit
 )
 
 
@@ -18,10 +17,6 @@ class DataSourceFactory:
         is_input_feature: Optional[bool] = True,
     ) -> BaseDataProcessor:
         source = data_for_source.get("source").lower()
-        if source == "reddit":
-            return Reddit(
-                specific_config=data_for_source, data_processor_helper=data_processor_helper, is_input_feature=is_input_feature
-            )
         if source == "av":
             return AlphaVantage(
                 specific_config=data_for_source, data_processor_helper=data_processor_helper, is_input_feature=is_input_feature

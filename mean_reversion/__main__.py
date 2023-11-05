@@ -53,7 +53,8 @@ if __name__ == "__main__":
         FutureCovariatesProcessor(
             config_manager, data_processor_helper
         ).run()
-    DataForModelSelector(config_manager).run()
+    if config_manager.config['common']['engineering']:
+        DataForModelSelector(config_manager).run()
     if config_manager.config['common']['hyperparameters_optimization']['is_optimizing']:
             HyperpametersOptimizer(config_manager).run()
 

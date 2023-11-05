@@ -3,8 +3,8 @@ common :
   end_date : '2023-06-15'
   max_missing_data : .02
   fetching : False
-  preprocessing : False
-  engineering : False
+  preprocessing : True
+  engineering : True
   model_phase : 'train'
   min_nb_trades : 30
   train_test_split : [.8,.10,.10]
@@ -20,7 +20,7 @@ common :
     is_pruning : True
     is_optimizing : False
     nb_trials : 30
-    is_using_prev_study : True
+    is_using_prev_study : False
 
   scaling: False
   metrics_to_choose_model :
@@ -110,7 +110,7 @@ hyperparameters:
     TemporalFusionTransformer:
       loss: 'QuantileLoss'
       learning_rate: 0.01
-      hidden_size: 16
+      hidden_size: 64
       lstm_layers : 1
       attention_head_size: 1
       dropout: 0.2

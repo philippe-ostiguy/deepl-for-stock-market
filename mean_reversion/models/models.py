@@ -173,10 +173,23 @@ class BaseModelBuilder(ABC):
             data['group'] = 'group_1'
             setattr(self, f'_{dataset_type}_data', data)
 
+            missing_data = data.isnull().sum()
+            empty_data = (data == '').sum()
+
+            missing_locations = {col: data[data[col].isnull()].index.tolist() for col in data.columns if missing_data[col] > 0}
+            empty_locations = {col: data[data[col] == ''].index.tolist() for col in data.columns if empty_data[col] > 0}
+
+            if missing_locations:
+                raise ValueError(f'Missing values in {dataset_type} data: {missing_locations}')
+            if empty_locations:
+                raise ValueError(f'Empty values in {dataset_type} data: {empty_locations}')
+
+
     def _obtain_dataloader(self):
 
         self._continuous_cols = [col for col in self._input_past_train.columns if col not in ["time"]]
         self._targets = [col for col in self._output_train.columns if col not in ["time"]]
+        self._continuous_cols.extend(self._targets)
         if len(self._targets) > 1 :
             list_of_normalizers = []
             for target in self._targets:
@@ -185,11 +198,12 @@ class BaseModelBuilder(ABC):
             ))
             target_normalizer = MultiNormalizer(list_of_normalizers)
         else :
+            self._targets = self._targets[0]
             target_normalizer = GroupNormalizer(
                 groups=["group"]
             )
 
-        self._continuous_cols.extend(self._targets)
+
         self._add_encoder_length = True
         self._add_relative_time_idx = True
         self._add_target_scales = True
@@ -540,9 +554,9 @@ class ModelBuilder(BaseModelBuilder):
                     self._config_manager.hyperparameters[self._model_name][hyper] = best_hyper_params.best_params[hyper]
 
     def _obtain_best_model(self):
-        #best_model_path = self._model_checkpoint.best_model_path
-        #self._best_model = self._model_to_train.load_from_checkpoint(best_model_path)
-        self._best_model = self._model_to_train.load_from_checkpoint('tempo/best_model.ckpt')
+        best_model_path = self._model_checkpoint.best_model_path
+        self._best_model = self._model_to_train.load_from_checkpoint(best_model_path)
+        #self._best_model = self._model_to_train.load_from_checkpoint('tempo/best_model.ckpt')
 
 
     def _coordinate_interpretions(self):
