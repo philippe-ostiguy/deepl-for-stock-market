@@ -91,7 +91,7 @@ class PortfolioReturnMetric(Metric):
             total_trades += num_of_trades
             all_metrics.append(metrics)
 
-        if total_trades <= self._config['common']['min_nb_trades']:
+        if total_trades <= self._config['common']['min_nb_trades']*len(self.daily_returns):
             logging.warning(
                 f'Low nb of trades in compute: {total_trades}')
             return torch.tensor(0.0)

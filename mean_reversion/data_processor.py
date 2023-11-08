@@ -561,7 +561,7 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
                                       if col != RAW_ATTRIBUTES[0]]
 
         if self._transformed_columns :
-            if self._processor._config["common"]["scaling"] or self._processor._config["common"]["features_engineering"]["is_using_pca"]:
+            if self._processor._config["common"]["scaling"]:
                 self._dispatch_feature_engineering("data_scaling")
             self._data_processor_helper.data_to_write_ts = self._engineered_data
 

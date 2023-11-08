@@ -288,8 +288,7 @@ class BaseModelBuilder(ABC):
     def _coordinate_metrics_calculation(self,
                                         dataloader,
                                         data,
-                                        dataset_type,
-                                        is_execute_all: Optional[bool] = True):
+                                        dataset_type):
         self._raw_predictions = self._best_model.predict(dataloader,
                                                          mode="raw",
                                                          return_x=True,
@@ -301,12 +300,10 @@ class BaseModelBuilder(ABC):
             self._preds_current_stock = prediction
             self._gather_metrics(dataloader, data)
             self._calculate_metrics(data)
-            if is_execute_all:
-                self._plot_predictions(dataset_type)
+            self._plot_predictions(dataset_type)
 
         self._calculate_aggregate_metrics(dataset_type)
-        if is_execute_all:
-            self._save_metrics(dataset_type)
+        self._save_metrics(dataset_type)
 
 
     def _gather_metrics(self, dataloader, current_data_set):
@@ -422,7 +419,7 @@ class BaseModelBuilder(ABC):
             mean_squared_error(self._current_all_actuals, naive_forecast)))
         risk_reward_metrics = get_risk_rewards_metrics(self._returns_on_trade)
         self._return_on_risk.append(risk_reward_metrics['return_on_risk'])
-        self._returns_on_trade_all.append(risk_reward_metrics['annualized_risk'])
+        self._returns_on_trade_all.append(risk_reward_metrics['annualized_return'])
         self._nb_trades.append(len(self._returns_on_trade_list))
 
         actual_annualized_return = \
@@ -450,20 +447,22 @@ class BaseModelBuilder(ABC):
             self._metrics = {}
 
         weighted_av_metrics = self._obtain_aggregate_metrics(
-            [self._rmse, self._f1_score_value, self._naive_forecast_rmse,
-             self._return_on_risk, self._actual_return_on_risk, self._returns_on_trade_all]
+            [self._rmse, self._f1_score_value,
+             self._return_on_risk, self._returns_on_trade_all]
         )
         self._aggregated_return_on_risk = weighted_av_metrics[3]
+        naive_rmse = sum(self._naive_forecast_rmse)/len(self._nb_trades)
+        actual_return_risk = sum(self._actual_return_on_risk)/len(self._nb_trades)
 
         self._metrics[dataset_type] = {
             "rmse": weighted_av_metrics[0],
             "f1_score": weighted_av_metrics[1],
-            "naive_forecast_rmse": weighted_av_metrics[2],
-            "rmse_vs_naive": weighted_av_metrics[0] / weighted_av_metrics[2] if weighted_av_metrics[2]!=0 else 0,
-            "return": weighted_av_metrics[5].item(),
+            "naive_forecast_rmse": naive_rmse,
+            "rmse_vs_naive": weighted_av_metrics[0] / naive_rmse if naive_rmse!=0 else 0,
+            "return": weighted_av_metrics[3].item(),
             "actual_return": np.prod(self._all_actual_returns) - 1,
-            "return_on_risk": weighted_av_metrics[3].item(),
-            "actual_return_on_risk": weighted_av_metrics[4],
+            "return_on_risk": weighted_av_metrics[2].item(),
+            "actual_return_on_risk": actual_return_risk,
             "max_drawdown": self._max_drawdown_all,
             "nb_of_trades": sum(self._nb_trades)
         }

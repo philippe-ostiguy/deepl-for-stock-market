@@ -1,8 +1,9 @@
 import torch
+from mean_reversion.config.config_utils import ConfigManager
 
-def get_risk_rewards_metrics(daily_returns : torch.Tensor) -> dict:
+def get_risk_rewards_metrics(daily_returns : torch.Tensor, config_manager = ConfigManager()) -> dict:
     metrics = {}
-    if daily_returns.shape[0] <= 15:
+    if daily_returns.shape[0] <= config_manager.config['common']['min_nb_trades']:
         metrics['annualized_return'] = torch.tensor(0.0)
         metrics['annualized_risk'] = torch.tensor(0.0)
         metrics['return_on_risk'] = torch.tensor(0.0)
