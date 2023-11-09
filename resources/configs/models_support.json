@@ -10,9 +10,9 @@
     "supported_metrics": [
         "rmse",
         "predicted_vs_naive",
-        "return",
+        "annualized_return",
         "predicted_vs_naive_ma",
         "f1_score",
-        "return_on_risk"
+        "ann_return_on_risk"
     ]
 }

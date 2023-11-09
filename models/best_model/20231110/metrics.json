@@ -1,0 +1,52 @@
+{
+    "predict": {
+        "rmse": 0.012876355053047496,
+        "f1_score": 0.4649153930157618,
+        "naive_forecast_rmse": 0.01436582835398785,
+        "rmse_vs_naive": 0.8963183142497393,
+        "annualized_return": 0.3836156725883484,
+        "actual_annualized_return": 0.18627800995573573,
+        "ann_return_on_risk": 2.902358293533325,
+        "ann_actual_return_on_risk": 0.7554271856705098,
+        "max_drawdown": [
+            0.0781420153448637,
+            0,
+            0.01947454139955641
+        ],
+        "nb_of_trades": [
+            67,
+            0,
+            54
+        ],
+        "individual_annualized_return": [
+            -0.09552657604217529,
+            0.0,
+            0.9781069755554199
+        ]
+    },
+    "test": {
+        "rmse": 0.011325362197650676,
+        "f1_score": 0.382010582010582,
+        "naive_forecast_rmse": 0.014729415352561113,
+        "rmse_vs_naive": 0.7688942111121505,
+        "annualized_return": 0.08598387241363525,
+        "actual_annualized_return": 0.16871432636077496,
+        "ann_return_on_risk": 0.5104998350143433,
+        "ann_actual_return_on_risk": 0.6691748433813048,
+        "max_drawdown": [
+            0.10383174117614814,
+            0,
+            0
+        ],
+        "nb_of_trades": [
+            70,
+            0,
+            0
+        ],
+        "individual_annualized_return": [
+            0.08598387241363525,
+            0.0,
+            0.0
+        ]
+    }
+}

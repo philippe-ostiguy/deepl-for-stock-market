@@ -3,8 +3,8 @@ common :
   end_date : '2023-06-15'
   max_missing_data : .02
   fetching : False
-  preprocessing : True
-  engineering : True
+  preprocessing : False
+  engineering : False
   model_phase : 'train'
   min_nb_trades : 20
   train_test_split : [.8,.10,.10]
@@ -14,7 +14,7 @@ common :
     check_bell_shape: False
     make_data_stationary: True
     pca_variance : .7
-    is_using_pca : True
+    is_using_pca : False
 
   hyperparameters_optimization :
     is_pruning : True
@@ -72,7 +72,7 @@ output :
 
 hyperparameters:
   common:
-    confidence_level : .7
+    confidence_level : .6
     batch_size: 32
     epochs: 150
     num_loader_workers : 2
@@ -87,7 +87,7 @@ hyperparameters:
 #      pct_start: 0.1
 #      anneal_strategy: "linear"
 #      cycle_momentum: False
-    likelihood: [0.05, 0.1, 0.3, 0.5, 0.7, 0.9, 0.95]
+    likelihood: [0.05, 0.1, 0.4, 0.5, 0.6, 0.9, 0.95]
     max_encoder_length: 64
     max_prediction_length: 1
     callbacks :
