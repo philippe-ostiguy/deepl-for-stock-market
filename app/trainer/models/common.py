@@ -1,5 +1,5 @@
 import torch
-from shared.config_utils import ConfigManager
+from app.shared.config_utils import ConfigManager
 
 def get_risk_rewards_metrics(daily_returns : torch.Tensor, config_manager = ConfigManager()) -> dict:
     metrics = {}

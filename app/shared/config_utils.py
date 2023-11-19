@@ -1,5 +1,5 @@
-from shared.utils import read_json, obtain_market_dates, clear_directory_content
-from mean_reversion.config.constants import (
+from app.shared.utils import read_json, obtain_market_dates, clear_directory_content
+from app.trainer.config.constants import (
     RAW_PATH,
     PREPROCESSED_PATH,
     ENGINEERED_PATH,
@@ -10,7 +10,7 @@ from mean_reversion.config.constants import (
     PATHS_TO_CREATE
 )
 
-from mean_reversion.config.model_config import (
+from app.trainer.config.model_config import (
     PYTORCH_CALLBACKS,
     LOSS
 )

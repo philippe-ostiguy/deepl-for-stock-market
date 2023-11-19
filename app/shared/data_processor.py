@@ -48,16 +48,16 @@ from sklearn.decomposition import PCA
 
 load_dotenv()
 
-from shared.config_utils import ConfigManager
+from app.shared.config_utils import ConfigManager
 
-from shared.utils import (
+from app.shared.utils import (
     read_json,
     obtain_market_dates,
     read_csv_to_pd_formatted,
     write_to_csv_formatted,
     write_pd_to_csv
 )
-from mean_reversion.config.constants import (
+from app.trainer.config.constants import (
     RAW_ATTRIBUTES,
     MODEL_PHASES,
     MODEL_DATA_PATH,

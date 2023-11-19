@@ -15,11 +15,11 @@ import json
 import numpy as np
 from sklearn.metrics import mean_squared_error, f1_score
 import threading
-from mean_reversion.models.model_customizer import CustomNHiTS,CustomDeepAR,CustomTemporalFusionTransformer,CustomlRecurrentNetwork
-from shared.config_utils import ConfigManager, ModelValueRetriver
-from shared.utils import clear_directory_content, read_json, save_json, read_csv_to_pd_formatted
-from mean_reversion.models.common import get_risk_rewards_metrics
-from mean_reversion.config.constants import DATASETS
+from app.trainer.models.model_customizer import CustomNHiTS,CustomDeepAR,CustomTemporalFusionTransformer,CustomlRecurrentNetwork
+from app.shared.config_utils import ConfigManager, ModelValueRetriver
+from app.shared.utils import clear_directory_content, read_json, save_json, read_csv_to_pd_formatted
+from app.trainer.models.common import get_risk_rewards_metrics
+from app.trainer.config.constants import DATASETS
 import pytz
 import datetime
 import re

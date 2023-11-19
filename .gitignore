@@ -123,7 +123,7 @@ models/*
 resources/input/*
 /resources/input/
 super-mario-bros.mp3
-/mean_reversion/.idea/
+/app/trainer/.idea/
 .idea/
 /archives/
 /colab/

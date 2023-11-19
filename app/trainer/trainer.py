@@ -22,15 +22,15 @@
 #  OR OTHER DEALINGS IN THE SOFTWARE.
 ###############################################################################
 
-from shared.data_processor import (
+from app.shared.data_processor import (
     DataForModelSelector,
     FutureCovariatesProcessor,
     DataProcessorHelper
 )
 
-from shared.config_utils import InitProject, ConfigManager
-from mean_reversion.factory import DataSourceFactory
-from mean_reversion.models.models import HyperpametersOptimizer, ModelBuilder
+from app.shared.config_utils import InitProject, ConfigManager
+from app.trainer.factory import DataSourceFactory
+from app.trainer.models.models import HyperpametersOptimizer, ModelBuilder
 import threading
 import torch
 import os

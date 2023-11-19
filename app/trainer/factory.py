@@ -1,6 +1,6 @@
 from typing import Optional
 
-from shared.data_processor import (
+from app.shared.data_processor import (
     BaseDataProcessor,
     AlphaVantage,
     FRED,

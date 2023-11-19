@@ -1,8 +1,8 @@
 from torchmetrics import Metric
 import torch
 from pytorch_forecasting import TemporalFusionTransformer, DeepAR, NHiTS, RecurrentNetwork
-from shared.config_utils import ConfigManager, ModelValueRetriver
-from mean_reversion.models.common import get_risk_rewards_metrics
+from app.shared.config_utils import ConfigManager, ModelValueRetriver
+from app.trainer.models.common import get_risk_rewards_metrics
 import logging
 
 class PortfolioReturnMetric(Metric):

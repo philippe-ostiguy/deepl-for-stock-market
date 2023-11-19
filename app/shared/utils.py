@@ -29,13 +29,11 @@ import json
 import pandas as pd
 import shutil
 
-from darts import TimeSeries
-
-from mean_reversion.config.constants import (
+from app.trainer.config.constants import (
     RAW_ATTRIBUTES,
 )
 
-from typing import Optional, Union
+from typing import Optional
 import os
 import numpy as np
 
