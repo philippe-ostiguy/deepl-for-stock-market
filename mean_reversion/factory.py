@@ -1,6 +1,6 @@
 from typing import Optional
 
-from mean_reversion.data_processor import (
+from shared.data_processor import (
     BaseDataProcessor,
     AlphaVantage,
     FRED,

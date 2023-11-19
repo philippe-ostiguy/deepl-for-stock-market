@@ -111,15 +111,22 @@ def get_previous_market_date(date, last_market_date=None):
     return last_market_date, market_open_dates[-1].date()
 
 
+def _replace_for_sliding_window(file : str, window : Optional[int] = '') -> str:
+    if window or window ==0 :
+        file = file.replace('.csv', f'_{window}.csv')
+    return file
+
 def read_csv_to_pd_formatted(
     file: str,
     sort_by_column_name: Optional[str] = RAW_ATTRIBUTES[0],
+        window : Optional[int] = ''
 ) -> pd.DataFrame:
+    file = _replace_for_sliding_window(file, window)
+
     pd_data = pd.read_csv(file, encoding="utf-8")
     pd_data = pd_data.sort_values(by=sort_by_column_name, ascending=True)
     pd_data = pd_data.reset_index(drop=True)
     return pd_data
-
 
 def write_pd_to_csv(data:pd.DataFrame, file: str,
                     sort_by_column_name: Optional[str] = RAW_ATTRIBUTES[0]) -> None:
@@ -127,19 +134,15 @@ def write_pd_to_csv(data:pd.DataFrame, file: str,
     data = data.sort_values(by=sort_by_column_name, ascending=True)
     data.to_csv(file, index=False, encoding="utf-8")
 
+
 def write_to_csv_formatted(
-    data: Union[pd.DataFrame, TimeSeries], file: str, sort_by_column_name: Optional[str] = RAW_ATTRIBUTES[0]
+    data: pd.DataFrame, file: str, sort_by_column_name: Optional[str] = RAW_ATTRIBUTES[0],
+        window : Optional[int] = ''
 ) -> None:
-    if isinstance(data, pd.DataFrame):
-        _raise_error_if_nan_value(data)
-        write_pd_to_csv(data,file,sort_by_column_name)
-    elif isinstance(data, TimeSeries):
-        if not data.has_range_index:
-            raise ValueError(f"Index for the time series is not a range index")
-        _raise_error_if_nan_value(data.pd_dataframe())
-        data.pd_dataframe().to_csv(file, index=True,encoding="utf-8")
-    else:
-        raise TypeError("data must be a DataFrame or a TimeSeries")
+    file = _replace_for_sliding_window(file, window)
+
+    _raise_error_if_nan_value(data)
+    write_pd_to_csv(data,file,sort_by_column_name)
 
 
 def _raise_error_if_nan_value(data: pd.DataFrame) -> None:

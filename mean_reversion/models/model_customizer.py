@@ -1,7 +1,7 @@
 from torchmetrics import Metric
 import torch
 from pytorch_forecasting import TemporalFusionTransformer, DeepAR, NHiTS, RecurrentNetwork
-from mean_reversion.config.config_utils import ConfigManager, ModelValueRetriver
+from shared.config_utils import ConfigManager, ModelValueRetriver
 from mean_reversion.models.common import get_risk_rewards_metrics
 import logging
 
@@ -41,16 +41,6 @@ class PortfolioReturnMetric(Metric):
                 high_predictions = list_preds
 
             target = target_tensor.squeeze().tolist()
-
-
-            if not self._config["common"]["features_engineering"]["make_data_stationary"]:
-                former_target = target
-                target = [(target[i] / target[i - 1]) -1 for i in range(1, len(target))]
-
-                low_predictions = [(low_predictions[i] / former_target[i - 1]) -1 for i in
-                                   range(1, len(low_predictions))]
-                high_predictions = [(high_predictions[i] / former_target[i - 1]) -1 for i in
-                                    range(1, len(high_predictions))]
 
             daily_returns = []
             no_position_count = 0

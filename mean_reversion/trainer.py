@@ -22,13 +22,13 @@
 #  OR OTHER DEALINGS IN THE SOFTWARE.
 ###############################################################################
 
-from mean_reversion.data_processor import (
+from shared.data_processor import (
     DataForModelSelector,
     FutureCovariatesProcessor,
     DataProcessorHelper
 )
 
-from mean_reversion.config.config_utils import InitProject, ConfigManager
+from shared.config_utils import InitProject, ConfigManager
 from mean_reversion.factory import DataSourceFactory
 from mean_reversion.models.models import HyperpametersOptimizer, ModelBuilder
 import threading
@@ -50,9 +50,10 @@ if __name__ == "__main__":
             is_input_feature=is_input,
         ).run()
     if config_manager.config["inputs"]["future_covariates"]["data"]:
-        FutureCovariatesProcessor(
-            config_manager, data_processor_helper
-        ).run()
+        for window in range(config_manager.config['common']['sliding_windows']):
+            FutureCovariatesProcessor(
+                config_manager, data_processor_helper, sliding_window=window
+            ).run()
     if config_manager.config['common']['engineering']:
         DataForModelSelector(config_manager).run()
     if config_manager.config['common']['hyperparameters_optimization']['is_optimizing']:

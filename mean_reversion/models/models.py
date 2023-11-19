@@ -16,8 +16,8 @@ import numpy as np
 from sklearn.metrics import mean_squared_error, f1_score
 import threading
 from mean_reversion.models.model_customizer import CustomNHiTS,CustomDeepAR,CustomTemporalFusionTransformer,CustomlRecurrentNetwork
-from mean_reversion.config.config_utils import ConfigManager, ModelValueRetriver
-from mean_reversion.utils import clear_directory_content, read_json, save_json
+from shared.config_utils import ConfigManager, ModelValueRetriver
+from shared.utils import clear_directory_content, read_json, save_json, read_csv_to_pd_formatted
 from mean_reversion.models.common import get_risk_rewards_metrics
 from mean_reversion.config.constants import DATASETS
 import pytz
@@ -48,6 +48,7 @@ class BaseModelBuilder(ABC):
     ):
         self._config_manager = config_manager
         self._config = self._config_manager.config
+        self._window = None
         self._params = {}
         self._datasets = DATASETS
         self._model_dir = ''
@@ -131,9 +132,9 @@ class BaseModelBuilder(ABC):
                 self._config["inputs"]["future_covariates"]['data']
 
             for dataset in self._datasets:
-                input_future = pd.read_csv(
+                input_future = read_csv_to_pd_formatted(
                     self._config["inputs"]["future_covariates"]["common"][
-                        "model_data"][dataset])
+                        "model_data"][dataset], sort_by_column_name='time', window=self._window if dataset!= 'test' else '')
                 for category in self._categorical_cols :
                     input_future[category] = input_future[category].astype(str)
                 setattr(self, f'_input_future_{dataset}', input_future)
@@ -141,13 +142,13 @@ class BaseModelBuilder(ABC):
             self._categorical_cols = []
 
         for dataset in self._datasets:
-            input_past = pd.read_csv(
-                f"resources/input/model_data/input_past_{dataset}.csv")
+            input_past = read_csv_to_pd_formatted(
+                f"resources/input/model_data/input_past_{dataset}.csv", window=self._window if dataset!= 'test' else '')
             input_past.columns = input_past.columns.str.replace('.', '_',
                                                                 regex=False)
             setattr(self, f'_input_past_{dataset}', input_past)
 
-            output = pd.read_csv(f"resources/input/model_data/output_{dataset}.csv")
+            output = read_csv_to_pd_formatted(f"resources/input/model_data/output_{dataset}.csv",window=self._window if dataset!= 'test' else '')
             setattr(self, f'_output_{dataset}', output)
 
     def _initialize_training_variables(self):
@@ -208,13 +209,6 @@ class BaseModelBuilder(ABC):
         self._add_relative_time_idx = True
         self._add_target_scales = True
         self._static_categoricals = ["group"]
-
-        if "NHiTS" in self._model_name :
-            self._categorical_cols = []
-            self._add_relative_time_idx = False
-            self._add_encoder_length = False
-            self._add_target_scales = False
-            self._static_categoricals = []
 
         self._training_dataset = TimeSeriesDataSet(
             self._train_data,
@@ -332,24 +326,10 @@ class BaseModelBuilder(ABC):
 
             actual_value = self._raw_predictions.y[0][self._target_item][index].item()
 
-            if not self._config["common"]["features_engineering"]["make_data_stationary"] and index == 0:
-                continue
-
-            if not self._config["common"]["features_engineering"]["make_data_stationary"]:
-                actual_return = (actual_value / self._raw_predictions.y[0][self._target_item][
-                    index - 1].item()) - 1
-                median_pred_return = (median_pred_value / self._raw_predictions.y[0][self._target_item][
-                    index - 1].item()) - 1
-                upper_return = (upper_value / self._raw_predictions.y[0][self._target_item][
-                    index - 1].item()) - 1
-                lower_return = (lower_value / self._raw_predictions.y[0][self._target_item][
-                    index - 1].item()) - 1
-
-            else:
-                median_pred_return = median_pred_value
-                lower_return = lower_value
-                upper_return = upper_value
-                actual_return = actual_value
+            median_pred_return = median_pred_value
+            lower_return = lower_value
+            upper_return = upper_value
+            actual_return = actual_value
 
             if lower_return > 0 and upper_return > 0:
                 self._cumulative_predicted_return *= (
@@ -507,33 +487,40 @@ class ModelBuilder(BaseModelBuilder):
         super().__init__()
         self._config_manager = config_manager
         self._config = self._config_manager.config
-        self._params = self._assign_params()
-        self._initialize_training_variables()
-        self._lightning_logs_dir = 'lightning_logs'
-        self._lower_index, self._upper_index = self._values_retriever.confidence_indexes
 
 
     def run(self):
 
         for model in self._config["hyperparameters"]["models"]:
-            self._obtain_data()
-            self._model_name = model
-            self._assign_data_models()
-            self._model_dir = f'models/{self._model_name}'
-            self._clean_directory()
-            self._model_to_train =  CUSTOM_MODEL[self._model_name]
-            if self._config['common']['hyperparameters_optimization'][
-                'is_optimizing']:
-                self._assign_best_hyperparams()
+            for window in range(self._config['common']['sliding_windows']):
+                self._window= window
+                self._initialize_variables()
+                self._obtain_data()
+                self._model_name = model
+                self._assign_data_models()
+                self._model_dir = f'models/{self._model_name}'
+                self._clean_directory()
+                self._model_to_train =  CUSTOM_MODEL[self._model_name]
+                if self._config['common']['hyperparameters_optimization'][
+                    'is_optimizing']:
+                    self._assign_best_hyperparams()
 
-            self._obtain_dataloader()
-            self._train_model(self._config_manager.hyperparameters)
+                self._obtain_dataloader()
+                self._train_model(self._config_manager.hyperparameters)
+
+
             self._obtain_best_model()
             self._coordinate_evaluation()
             self._save_metrics_from_tensorboardflow()
             self._coordinate_interpretions()
             self._save_run_information()
             self._coordinate_select_best_model()
+
+    def _initialize_variables(self):
+        self._params = self._assign_params()
+        self._initialize_training_variables()
+        self._lightning_logs_dir = 'lightning_logs'
+        self._lower_index, self._upper_index = self._values_retriever.confidence_indexes
 
     def _assign_best_hyperparams(self):
         optimized_model_path = self._model_dir.replace('models/','models/hyperparameters_optimization/')

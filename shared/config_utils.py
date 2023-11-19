@@ -1,4 +1,4 @@
-from mean_reversion.utils import read_json, obtain_market_dates, clear_directory_content
+from shared.utils import read_json, obtain_market_dates, clear_directory_content
 from mean_reversion.config.constants import (
     RAW_PATH,
     PREPROCESSED_PATH,
@@ -353,7 +353,6 @@ class ConfigManager:
         return data_sources
 
     def _add_data_files_output(self,all_output: List) -> List:
-        new_data = {}
         final_data = []
         for data_per_source in all_output:
             new_data_list = []

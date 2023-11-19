@@ -3,8 +3,9 @@ common :
   end_date : '2023-06-15'
   max_missing_data : .02
   fetching : False
-  preprocessing : True
-  engineering : True
+  preprocessing : False
+  engineering : False
+  sliding_windows : 3
   model_phase : 'train'
   min_nb_trades : 20
   train_test_split : [.8,.10,.10]
@@ -12,7 +13,6 @@ common :
   test_performance : .4
   features_engineering :
     check_bell_shape: False
-    make_data_stationary: True
     pca_variance : .7
     is_using_pca : True
 
@@ -22,7 +22,7 @@ common :
     nb_trials : 30
     is_using_prev_study : False
 
-  scaling: True
+  scaling: False
   metrics_to_choose_model :
     - 'ann_return_on_risk'
 
@@ -35,29 +35,29 @@ inputs:
     - source: 'av'
       data:
         - 'SPY'
-        - 'set_dynamically_50_largest_stocks'
-        - 'NATURAL_GAS'
-        - '3month'
-        - '10year'
-        - '2year'
-        - 'EUR'
-        - 'WTI'
-        - 'MSFT'
-        - 'GOOGL'
-        - 'AAPL'
-        - 'AMZN'
-    - source : 'fred'
-      data:
-        - 'set_dynamically'
-        - 'T5YIE'
-        - 'T10YIE'
-        - 'DEXUSNZ'
-        - 'VIXCLS'
-    - source : 'macrotrends'
-      data :
-         - 'set_dynamically'
-         - 'wheat'
-         - 'corn'
+#        - 'set_dynamically_50_largest_stocks'
+#        - 'NATURAL_GAS'
+#        - '3month'
+#        - '10year'
+#        - '2year'
+#        - 'EUR'
+#        - 'WTI'
+#        - 'MSFT'
+#        - 'GOOGL'
+#        - 'AAPL'
+#        - 'AMZN'
+#    - source : 'fred'
+#      data:
+#        - 'set_dynamically'
+#        - 'T5YIE'
+#        - 'T10YIE'
+#        - 'DEXUSNZ'
+#        - 'VIXCLS'
+#    - source : 'macrotrends'
+#      data :
+#         - 'set_dynamically'
+#         - 'wheat'
+#         - 'corn'
   future_covariates :
       data:
         - 'day'
@@ -67,8 +67,8 @@ output :
   - source : 'av'
     data :
       - 'SPY'
-      - 'AAPL'
-      - 'MSFT'
+#      - 'AAPL'
+#      - 'MSFT'
 
 hyperparameters:
   common:

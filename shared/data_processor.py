@@ -22,46 +22,36 @@
 #  OR OTHER DEALINGS IN THE SOFTWARE.
 ###############################################################################
 
-import re
 import pandas as pd
 from collections import deque
 from ratelimiter import RateLimiter
 from datetime import datetime, timedelta
 import numpy as np
+from copy import deepcopy
 import pickle
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import os
 os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 import torch
 torch.set_default_dtype(torch.float32)
 from typing import Optional, List, Tuple, Union, Dict, Any, Callable
 from dotenv import load_dotenv
-from copy import deepcopy
 from abc import ABC, abstractmethod
-from pmaw import PushshiftAPI
 import time
-import pytz
 from statsmodels.tsa.stattools import adfuller
-import csv
 import requests
 import logging
 from contextlib import suppress
-from darts import TimeSeries
 import matplotlib.pyplot as plt
 import scipy.stats as stats
 from sklearn.decomposition import PCA
 
 load_dotenv()
 
-from mean_reversion.config.config_utils import ConfigManager
+from shared.config_utils import ConfigManager
 
-from mean_reversion.utils import (
+from shared.utils import (
     read_json,
-    string_to_datetime,
-    est_dt_to_epoch,
-    get_previous_market_date,
-    create_file_if_not_exist,
     obtain_market_dates,
     read_csv_to_pd_formatted,
     write_to_csv_formatted,
@@ -83,7 +73,11 @@ class DataProcessorHelper:
             start_date=self._config["common"]["start_date"],
             end_date=self._config["common"]["end_date"],
         )
+        self._begin_train_index= []
+        self._train_split_index = []
+        self._predict_split_index = []
         self._obtain_split_index_set()
+
 
     @property
     def market_dates(self) -> pd.DataFrame:
@@ -97,58 +91,90 @@ class DataProcessorHelper:
     def data_to_write_ts(self, value: pd.DataFrame) -> None:
         self._data_to_write_ts = value
 
+    @property
+    def test_split_index(self):
+        return self._test_split_index
+
+    @test_split_index.setter
+    def test_split_index(self, index):
+        self._test_split_index = index
+
     def remove_first_transformed_data(
         self, data_to_process: pd.DataFrame
     ) -> pd.DataFrame:
         return data_to_process.iloc[ENGINEERED_DATA_TO_REMOVE:]
 
-    def obtain_train_data(self, full_data_set: pd.DataFrame) -> pd.DataFrame:
-        return full_data_set.loc[: self._train_split_index]
+    def obtain_train_data(self, full_data_set: pd.DataFrame,
+                          current_window: int) -> pd.DataFrame:
+        return full_data_set.loc[
+               self._begin_train_index[current_window]: self._train_split_index[
+                   current_window]].copy()
 
-    def obtain_predict_data(self, full_data_set: pd.DataFrame) -> pd.DataFrame:
-        return full_data_set.loc[self._train_split_index + 1 : self._predict_split_index]
+    def obtain_predict_data(self, full_data_set: pd.DataFrame,
+                            current_window: int) -> pd.DataFrame:
+        return full_data_set.loc[self._train_split_index[current_window] + 1:
+                                 self._predict_split_index[
+                                     current_window]].copy()
 
     def obtain_test_data(self, full_data_set: pd.DataFrame) -> pd.DataFrame:
-        return full_data_set.loc[self._predict_split_index + 1:]
+        return full_data_set.loc[self._test_split_index + 1:].copy()
 
     def _obtain_split_index_set(self) -> None:
         total_length = len(self._market_dates)
-        self._train_split_index = int(total_length * self._config["common"]["train_test_split"][0])
-        self._predict_split_index = self._train_split_index + int(total_length * self._config["common"]["train_test_split"][1])
+        self._test_split_index = int(total_length * (
+                self._config["common"]["train_test_split"][0] +
+                self._config["common"]["train_test_split"][1]))
+
+        data_length_for_sliding = self._test_split_index
+        train_ratio = self._config["common"]["train_test_split"][0]
+        predict_ratio = self._config["common"]["train_test_split"][1]
+        total_ratio = train_ratio + predict_ratio*self._config['common']['sliding_windows']
+
+        for window in range(self._config['common']['sliding_windows']):
+            train_index = int((train_ratio+window*predict_ratio)*data_length_for_sliding/total_ratio)
+            begin_train_index = int(window*predict_ratio*data_length_for_sliding/total_ratio)
+            self._train_split_index.append(train_index)
+            self._begin_train_index.append(begin_train_index)
+
+
+            if window == self._config['common']['sliding_windows'] - 1:
+                predict_index = data_length_for_sliding
+            else:
+                predict_index = int((train_ratio + (
+                            window + 1) * predict_ratio) * data_length_for_sliding / total_ratio)
+
+            self._predict_split_index.append(predict_index)
+
 
     def write_ts_to_csv(
-        self, path_write_file: Dict, columns_to_drop: Optional[List] = None
+        self, window, path_write_file: Dict, columns_to_drop: Optional[List] = None
     ) -> None:
-        self._convert_to_ts_data(columns_to_drop)
-        self._write_ts_to_the_csv(path_write_file)
+        self._convert_to_ts_data(columns_to_drop,window)
+        self._write_ts_to_the_csv(path_write_file, window)
 
-    def _write_ts_to_the_csv(self, path_to_write_file: Dict) -> None:
+    def _write_ts_to_the_csv(self, path_to_write_file: Dict,window : int) -> None:
         write_to_csv_formatted(
-            self._train_time_series, path_to_write_file["train"]
+            self._train_time_series, path_to_write_file["train"],sort_by_column_name='time',window = window
         )
 
         write_to_csv_formatted(
-            self._predict_time_series, path_to_write_file["predict"]
+            self._predict_time_series, path_to_write_file["predict"], sort_by_column_name='time',window=window
         )
         write_to_csv_formatted(
-            self._test_time_series, path_to_write_file["test"]
+            self._test_time_series, path_to_write_file["test"],sort_by_column_name='time'
         )
 
-    def _convert_to_ts_data(self, columns_to_drop: Optional[List]) -> None:
+    def _convert_to_ts_data(self, columns_to_drop: Optional[List],window : int) -> None:
         if columns_to_drop:
             self._data_to_write_ts = self._data_to_write_ts.drop(
                 columns=columns_to_drop
             )
-
-        self._train_time_series = TimeSeries.from_dataframe(
-            self.obtain_train_data(self._data_to_write_ts), freq="B"
-        ).astype(np.float32)
-        self._predict_time_series = TimeSeries.from_dataframe(
-            self.obtain_predict_data(self._data_to_write_ts), freq="B"
-        ).astype(np.float32)
-        self._test_time_series = TimeSeries.from_dataframe(
-            self.obtain_test_data(self._data_to_write_ts), freq="B"
-        ).astype(np.float32)
+        self._train_time_series = self.obtain_train_data(self._data_to_write_ts, window)
+        self._train_time_series['time'] = self._train_time_series.index
+        self._predict_time_series = self.obtain_predict_data(self._data_to_write_ts, window)
+        self._predict_time_series['time'] = self._predict_time_series.index
+        self._test_time_series = self.obtain_test_data(self._data_to_write_ts)
+        self._test_time_series['time'] = self._test_time_series.index
 
 
 
@@ -161,132 +187,174 @@ class DataForModelSelector:
         self._datasets = DATASETS
 
     def run(self) -> None:
-        last_data = {}
-        for dataset in self._datasets:
-            for sources in self._config["output"]:
-                for data in sources['data']:
-                    if not os.path.exists(data["engineered"][dataset]):
-                        continue
-                    if not hasattr(self, '_all_output'):
-                        self._all_output = read_csv_to_pd_formatted(data["engineered"][dataset], sort_by_column_name='time')
+        for window in range(self._config['common']['sliding_windows']):
+            last_data = {}
+            for dataset in self._datasets:
+                for sources in self._config["output"]:
+                    for data in sources['data']:
+                        file = data["engineered"][dataset]
+                        if not os.path.exists(file):
+                            pass
+
+                        if not hasattr(self, '_all_output'):
+                            self._all_output = read_csv_to_pd_formatted(file, sort_by_column_name='time',
+                                                                        window = window if dataset.lower() != 'test' else '')
+                            last_data = data
+                            continue
+                        new_data = read_csv_to_pd_formatted(file, 'time',
+                                                            window=window if dataset.lower() != 'test' else '')
+                        self._all_output= self._all_output.merge(new_data, on='time', how='outer')
                         last_data = data
+                if not last_data:
+                    raise ValueError('No output file found')
+                write_to_csv_formatted(
+                    self._all_output,
+                    last_data["model_data"][dataset],
+                    'time', window=window if dataset.lower() != 'test' else '')
+                del self._all_output
+
+
+            self._output_data_train = read_csv_to_pd_formatted(
+                last_data["model_data"]['train'], "time", window=window
+            )
+
+            for input_in_config in self._config["inputs"]["past_covariates"][
+                "sources"
+            ]:
+                for current_input in input_in_config["data"]:
+                    train_file_path = current_input["engineered"]["train"].replace('.csv', f'_{window}.csv')
+                    predict_file_path = current_input["engineered"]["predict"].replace('.csv', f'_{window}.csv')
+                    test_file_path = current_input["engineered"]["test"]
+                    if not os.path.exists(test_file_path):
                         continue
-                    new_data = read_csv_to_pd_formatted(data["engineered"][dataset], 'time')
-                    self._all_output= self._all_output.merge(new_data, on='time', how='outer')
-                    last_data = data
-            if not last_data:
-                raise ValueError('No output file found')
-            write_to_csv_formatted(
-                self._all_output,
-                last_data["model_data"][dataset],
-                'time')
-            del self._all_output
-
-
-        self._output_data_train = read_csv_to_pd_formatted(
-            last_data["model_data"]['train'], "time"
-        )
-
-        for input_in_config in self._config["inputs"]["past_covariates"][
-            "sources"
-        ]:
-            for current_input in input_in_config["data"]:
-                train_file_path = current_input["engineered"]["train"]
-                predict_file_path = current_input["engineered"]["predict"]
-                test_file_path = current_input["engineered"]["test"]
-                if not os.path.exists(train_file_path):
-                    continue
-                asset_name = current_input["asset"]
-                data_train = self._load_and_prefix_data(
-                    train_file_path, asset_name, ["time"]
-                )
-
-                data_predict = self._load_and_prefix_data(
-                    predict_file_path, asset_name, ["time"]
-                )
-
-                data_test = self._load_and_prefix_data(
-                    test_file_path, asset_name, ["time"]
-                )
-
-                if not self._output_data_train["time"].equals(
-                    data_train["time"]
-                ):
-                    raise ValueError(
-                        f"time values are not consistent in {asset_name}"
+                    asset_name = current_input["asset"]
+                    data_train = self._load_and_prefix_data(
+                        train_file_path, asset_name, ["time","date"]
                     )
 
-                if self._data_for_model_train is None:
+                    data_predict = self._load_and_prefix_data(
+                        predict_file_path, asset_name, ["time","date"]
+                    )
+
+                    data_test = self._load_and_prefix_data(
+                        test_file_path, asset_name, ["time","date"]
+                    )
+
+                    if not self._output_data_train["time"].equals(
+                        data_train["time"]
+                    ):
+                        raise ValueError(
+                            f"time values are not consistent in {asset_name}"
+                        )
+
+
                     self._data_for_model_train = data_train
                     self._data_for_model_predict = data_predict
                     self._data_for_model_test = data_test
-                else:
-                    duplicated_columns = (
-                        self._data_for_model_train.columns.intersection(
-                            data_train.columns
-                        )
-                    )
-                    duplicated_columns = [
-                        col for col in duplicated_columns if col != "time"
-                    ]
-                    if duplicated_columns:
-                        raise ValueError(
-                            f"Duplicate columns found for asset {asset_name}: {', '.join(duplicated_columns)}"
-                        )
 
-                    self._data_for_model_train = pd.merge(
-                        self._data_for_model_train,
-                        data_train,
-                        on="time",
-                        how="left",
-                    )
-                    self._data_for_model_predict = pd.merge(
-                        self._data_for_model_predict,
-                        data_predict,
-                        on="time",
-                        how="left",
-                    )
-                    self._data_for_model_test = pd.merge(
-                        self._data_for_model_test,
-                        data_test,
-                        on="time",
-                        how="left",
-                    )
+            if self._config["common"]["model_phase"] == "train" and self._config["common"]["features_engineering"]["is_using_pca"]:
+                self._make_features_removal()
 
 
+            write_to_csv_formatted(
+                self._data_for_model_train,
+                self._config["inputs"]["past_covariates"]["common"]["model_data"][
+                    "train"
+                ],
+                'time', window=window
+            )
+            write_to_csv_formatted(
+                self._data_for_model_predict,
+                self._config["inputs"]["past_covariates"]["common"]["model_data"][
+                    "predict"
+                ],
+                'time', window=window
+            )
+            write_to_csv_formatted(
+                self._data_for_model_test,
+                self._config["inputs"]["past_covariates"]["common"]["model_data"][
+                    "test"
+                ],
+                'time'
+            )
 
-        if self._config["common"]["model_phase"] == "train" and self._config["common"]["features_engineering"]["is_using_pca"]:
-            self._make_features_removal()
+        self._check_data_before_model()
 
-        write_to_csv_formatted(
-            self._data_for_model_train,
-            self._config["inputs"]["past_covariates"]["common"]["model_data"][
-                "train"
-            ],
-            'time'
-        )
-        write_to_csv_formatted(
-            self._data_for_model_predict,
-            self._config["inputs"]["past_covariates"]["common"]["model_data"][
-                "predict"
-            ],
-            'time'
-        )
-        write_to_csv_formatted(
-            self._data_for_model_test,
-            self._config["inputs"]["past_covariates"]["common"]["model_data"][
-                "test"
-            ],
-            'time'
-        )
+    def _check_data_before_model(self):
+        folder_path = 'resources/input/model_data'
+        all_files = os.listdir(folder_path)
+        test_files = [f for f in all_files if f.endswith('test.csv')]
+        if len(test_files) != 3:
+            raise ValueError(
+                "There should be exactly 3 files ending with 'test.csv'")
+        input_files = [f for f in test_files if 'input' in f]
+        output_files = [f for f in test_files if 'output' in f]
+        if len(input_files) != 2 or len(output_files) != 1:
+            raise ValueError("There should be 2 input files and 1 output file")
+        df1 = pd.read_csv(os.path.join(folder_path, input_files[0]))
+        df2 = pd.read_csv(os.path.join(folder_path, input_files[1]))
+        df3 = pd.read_csv(os.path.join(folder_path, output_files[0]))
+        if len(df1) != len(df2) or not (
+        df1[['time', 'date']].equals(df2[['time', 'date']])) or not (
+        df1[['time', 'date']].equals(df3[['time', 'date']])):
+            raise ValueError(
+                "Files should have the same length and identical 'time' and 'date' values")
+
+        for dataset in DATASETS:
+            if dataset == 'test':
+                continue
+
+            for window in range(self._config['common']["sliding_windows"]):
+                loop_files = [f for f in all_files if
+                              f.endswith(f'{dataset}_{window}.csv')]
+                if len(loop_files) != 3:
+                    raise ValueError(
+                        f"Expected 3 files for loop item {window}, but found {len(loop_files)}")
+
+                dataframes = [pd.read_csv(os.path.join(folder_path, file)) for file
+                              in loop_files]
+
+                if not all(len(df) == len(dataframes[0]) and df[
+                    ['time', 'date']].equals(dataframes[0][['time', 'date']]) for df
+                           in dataframes):
+                    raise ValueError(
+                        f"Mismatch in 'time' and 'date' values for files in loop item {window}")
+
+
+        last_time_in_predict = None
+
+        for loop_item in range(self._config['common']["sliding_windows"]):
+
+            train_files = [f for f in all_files if
+                           f.endswith(f'train_{loop_item}.csv')]
+            predict_files = [f for f in all_files if
+                           f.endswith(f'predict_{loop_item}.csv')]
+
+            train_dfs = [pd.read_csv(os.path.join(folder_path, file)) for file
+                         in train_files]
+            predict_dfs = [pd.read_csv(os.path.join(folder_path, file)) for file
+                         in predict_files]
+            for item, df in enumerate(train_dfs):
+                if df['time'].iloc[-1] != predict_dfs[0]['time'].iloc[0] - 1:
+                    raise ValueError(
+                        f"Mismatch in 'time' values between train_{loop_item} and predict_{loop_item}")
+            last_time_in_predict = predict_dfs[-1]['time'].iloc[-1]
+
+
+        test_df = pd.read_csv(os.path.join(folder_path, 'input_past_test.csv'))
+
+        if test_df['time'].iloc[0] != last_time_in_predict + 1:
+            raise ValueError(
+                "The first 'time' value in 'test.csv' should be right after the last 'time' value in the last 'predict_{loop_item}.csv'")
+
 
     def _make_features_removal(self) -> None:
-        self._train_time_data = self._data_for_model_train['time']
-        self._test_time_data = self._data_for_model_test['time']
-        self._predict_time_data = self._data_for_model_predict['time']
-        self._data_for_model_train = self._data_for_model_train.drop('time',axis=1)
-        self._data_for_model_test = self._data_for_model_test.drop('time', axis=1)
-        self._data_for_model_predict = self._data_for_model_predict.drop('time', axis=1)
+        self._train_time_data = self._data_for_model_train[['time','date']]
+        self._test_time_data = self._data_for_model_test[['time','date']]
+        self._predict_time_data = self._data_for_model_predict[['time','date']]
+        self._data_for_model_train = self._data_for_model_train.drop(['time','date'],axis=1)
+        self._data_for_model_test = self._data_for_model_test.drop(['time','date'], axis=1)
+        self._data_for_model_predict = self._data_for_model_predict.drop(['time','date'], axis=1)
 
         pca = PCA()
         pca.fit(self._data_for_model_train)
@@ -308,10 +376,10 @@ class DataForModelSelector:
         self._data_for_model_predict= pd.DataFrame(data=principal_components_predict,
                                         columns=[f"PC{i+1}" for i in range(n_components)])
 
-        self._data_for_model_train['time'] = self._train_time_data.reset_index(drop=True)
-        self._data_for_model_test['time'] = self._test_time_data.reset_index(drop=True)
-        self._data_for_model_predict['time'] = self._predict_time_data.reset_index(drop=True)
 
+        self._data_for_model_train = self._data_for_model_train.join(self._train_time_data[['date', 'time']], how='left')
+        self._data_for_model_predict = self._data_for_model_predict.join(self._predict_time_data[['date', 'time']], how='left')
+        self._data_for_model_test = self._data_for_model_test.join(self._test_time_data[['date', 'time']], how='left')
 
     @staticmethod
     def _load_and_prefix_data(
@@ -362,6 +430,7 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
         data_for_stationarity_to_remove: Optional[
             int
         ] = ENGINEERED_DATA_TO_REMOVE,
+
     ):
         super().__init__(processor, data_processor_helper)
 
@@ -390,15 +459,15 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
         self._stationarity_applied = {}
         self._scaler_applied = {}
 
-    def _handle_missing_inf(self, data: pd.Series) -> Optional[pd.Series]:
+    def _handle_missing_inf(self, data: pd.Series, check_missing_indices = True) -> Optional[pd.Series]:
         missing_or_inf = data.isna() | np.isinf(data)
         missing_or_inf_count = missing_or_inf.sum()
         missing_indices = set(range(1, len(data) + 1)) - set(data.index)
-
-        if (missing_or_inf_count + len(missing_indices)) / len(
-            data
-        ) > self._processor._config["common"]["max_missing_data"]:
-            return None
+        if check_missing_indices :
+            if (missing_or_inf_count + len(missing_indices)) / len(
+                data
+            ) > self._processor._config["common"]["max_missing_data"]:
+                return None
 
         return self._handle_missing_inf_apply(data)
 
@@ -424,17 +493,17 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
 
         return adjusted_data
 
-    def _make_identity(self, data: pd.Series) -> Optional[pd.Series]:
-        data = self._handle_missing_inf(data)
+    def _make_identity(self, data: pd.Series, check_missing_indices = True) -> Optional[pd.Series]:
+        data = self._handle_missing_inf(data, check_missing_indices = check_missing_indices)
         return data
 
     def _apply_identity(self, data: pd.Series) -> pd.Series:
         data = self._handle_missing_inf_apply(data)
         return data
 
-    def _make_ratio(self, data: pd.Series) -> Optional[pd.Series]:
+    def _make_ratio(self, data: pd.Series, check_missing_indices = True) -> Optional[pd.Series]:
         ratio_data = data / data.shift(1)
-        ratio_data = self._handle_missing_inf(ratio_data)
+        ratio_data = self._handle_missing_inf(ratio_data,check_missing_indices = check_missing_indices)
         return ratio_data
 
     def _apply_ratio(self, data: pd.Series) -> pd.Series:
@@ -442,9 +511,9 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
         ratio_data = self._handle_missing_inf_apply(ratio_data)
         return ratio_data
 
-    def _make_logarithmic(self, data: pd.Series) -> Optional[pd.Series]:
+    def _make_logarithmic(self, data: pd.Series, check_missing_indices = True) -> Optional[pd.Series]:
         data = np.log(data + 1e-7)
-        data = self._handle_missing_inf(data)
+        data = self._handle_missing_inf(data,check_missing_indices = check_missing_indices)
         return data
 
     def _apply_logarithmic(self, data: pd.Series) -> pd.Series:
@@ -452,9 +521,9 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
         data = self._handle_missing_inf_apply(data)
         return data
 
-    def _make_first_difference(self, data: pd.Series) -> Optional[pd.Series]:
+    def _make_first_difference(self, data: pd.Series, check_missing_indices = True) -> Optional[pd.Series]:
         data_diff = data.diff()
-        data_diff = self._handle_missing_inf(data_diff)
+        data_diff = self._handle_missing_inf(data_diff,check_missing_indices = check_missing_indices)
         return data_diff
 
     def _apply_first_difference(self, data: pd.Series) -> pd.Series:
@@ -468,8 +537,7 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
 
     def coordinate_stationarity(self, data: pd.Series) -> Optional[str]:
         valid_transformations = []
-        if not self._processor._config["common"]["features_engineering"]["make_data_stationary"] :
-            return "identity"
+
         for name, transform_function in self._transformations:
             transformed_data = transform_function(data)
             if transformed_data is None or (
@@ -549,7 +617,6 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
             for column in self._engineered_data.columns
             if column != RAW_ATTRIBUTES[0]
         ]
-        self._coordinate_engineering_methods()
         self._dispatch_feature_engineering("data_stationary")
         self._engineered_data = (
             self._data_processor_helper.remove_first_transformed_data(
@@ -565,11 +632,11 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
                 self._dispatch_feature_engineering("data_scaling")
             self._data_processor_helper.data_to_write_ts = self._engineered_data
 
-            self._data_processor_helper.write_ts_to_csv(
+            self._data_processor_helper.write_ts_to_csv(self._processor._sliding_window,
                 self._processor._config["data"][
                     self._processor._current_data_index
-                ]["engineered"],
-                self._columns_to_drop_ts,
+                ]["engineered"]
+
             )
 
             self._perform_pickle_operation(
@@ -653,10 +720,10 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
             ]["asset"]
         ] = {}
         train_data = self._data_processor_helper.obtain_train_data(
-            self._engineered_data
+            self._engineered_data, self._processor._sliding_window
         ).copy()
         predict_data = self._data_processor_helper.obtain_predict_data(
-            self._engineered_data
+            self._engineered_data, self._processor._sliding_window
         ).copy()
         test_data = self._data_processor_helper.obtain_test_data(
             self._engineered_data
@@ -673,7 +740,7 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
                 ]["asset"]
             ][column] = scaler
 
-        self._engineered_data = pd.concat([train_data, predict_data, test_data])
+        self._engineered_data = pd.concat([train_data, predict_data,test_data])
 
     def _perform_common_not_stationary(self, column: str) -> None:
         self._engineered_data = self._engineered_data.drop(column, axis=1)
@@ -727,19 +794,24 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
         ] = {}
 
         train_data = self._data_processor_helper.obtain_train_data(
-            self._engineered_data
+            self._engineered_data, self._processor._sliding_window
         )
         predict_data = self._data_processor_helper.obtain_predict_data(
-            self._engineered_data
+            self._engineered_data, self._processor._sliding_window
         )
         test_data = self._data_processor_helper.obtain_test_data(
             self._engineered_data
         )
+        first_index_test = test_data.index[0]
+        first_index_train = train_data.index[0]
+        check_missing_indices = False
+        tempo_data = pd.DataFrame()
+        tempo_test_data = pd.DataFrame()
 
         for column in self._columns_to_transform:
             self._current_column = column
             best_transformation = self.coordinate_stationarity(
-                train_data[column]
+                train_data[column].reset_index(drop=True)
             )
 
             if best_transformation is None:
@@ -755,12 +827,22 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
                         self._processor._current_data_index
                     ]["asset"]
                 ][column] = best_transformation
-                self._engineered_data[column] = dict(self._transformations)[
-                    best_transformation
-                ](pd.concat([train_data[column], predict_data[column], test_data[column]]))
 
-    def _coordinate_engineering_methods(self):
-        pass
+                tempo_test_data[column] = dict(self._transformations)[best_transformation](test_data[column].reset_index(drop=True), check_missing_indices =check_missing_indices)
+                tempo_data[column] = \
+                    dict(self._transformations)[best_transformation]((pd.concat([train_data[column], predict_data[column]]).reset_index(drop=True)), check_missing_indices = check_missing_indices)
+
+
+        tempo_data.index = range(first_index_train,first_index_train+len(tempo_data))
+        tempo_test_data.index = range(first_index_test,first_index_test+len(tempo_test_data))
+        tempo_test_data['date'] = test_data['date']
+        tempo_data['date'] = pd.concat([train_data['date'], predict_data['date']])
+
+
+        self._engineered_data = pd.concat([ tempo_data,tempo_test_data])
+        if self._engineered_data.isna().any().any():
+            raise ValueError("NA values found in the self._data_engineered")
+
 
 
 class OutputDataEngineering(BaseInputOutputDataEngineering):
@@ -781,15 +863,6 @@ class OutputDataEngineering(BaseInputOutputDataEngineering):
         )
 
         target_column = (self._processor._config["data"][self._processor._current_data_index]['asset'] + '_target').lower()
-        if not self._processor._config["common"]["features_engineering"]["make_data_stationary"]:
-            if '4. close' in self._engineered_data.columns:
-                self._engineered_data[target_column] = self._engineered_data['4. close']
-            elif 'value' in self._engineered_data.columns:
-                self._engineered_data[target_column] = self._engineered_data['value']
-
-            else :
-                raise ValueError('Columns most have open and close name or value name')
-
         if '1. open' in self._engineered_data.columns and '4. close' in self._engineered_data.columns:
             self._engineered_data[target_column] = (
             self._engineered_data['4. close']
@@ -802,14 +875,16 @@ class OutputDataEngineering(BaseInputOutputDataEngineering):
             self._data_processor_helper.remove_first_transformed_data(
                 self._engineered_data
             )
-        columns_to_keep = {target_column}
-        self._engineered_data = self._engineered_data[[*columns_to_keep]]
+        columns_to_keep = [target_column,'date']
+        self._engineered_data = self._engineered_data[columns_to_keep]
 
         train_data = self._data_processor_helper.obtain_train_data(
-            self._engineered_data
+            self._engineered_data, self._processor._sliding_window
         ).copy()
+        if self._processor._sliding_window !=0:
+            train_data = self._data_processor_helper.remove_first_transformed_data(train_data)
         predict_data = self._data_processor_helper.obtain_predict_data(
-            self._engineered_data
+            self._engineered_data,self._processor._sliding_window
         ).copy()
 
         test_data = self._data_processor_helper.obtain_test_data(
@@ -817,10 +892,10 @@ class OutputDataEngineering(BaseInputOutputDataEngineering):
         ).copy()
 
         self._data_processor_helper.data_to_write_ts = \
-            pd.concat([train_data[list(columns_to_keep)[0]],
-                       predict_data[list(columns_to_keep)[0]],
-                       test_data[list(columns_to_keep)[0]]]).to_frame()
-        self._data_processor_helper.write_ts_to_csv(
+            pd.concat([train_data[columns_to_keep],
+                       predict_data[columns_to_keep],
+                       test_data[columns_to_keep]])
+        self._data_processor_helper.write_ts_to_csv(self._processor._sliding_window,
             self._processor._config["data"][
                 self._processor._current_data_index
             ]["engineered"]
@@ -840,11 +915,11 @@ class BaseDataProcessor(ABC):
         self._config = config
         self._model_phase = model_phase
         self._is_current_asset_dropped = False
+        self._sliding_window = 0
         self._attributes_to_delete = read_json(
             "resources/configs/models_support.json"
         )["attributes_to_discard"]
         if is_input_feature:
-            pass
             self._feature_engineering_strategy = InputDataEngineering(
                 self, data_processor_helper
             )
@@ -907,10 +982,12 @@ class BaseDataProcessor(ABC):
                 self._run_preprocess,
                 condition=self._config["common"]["preprocessing"]
             )
-            self._execute_if_not_dropped(
-                self._feature_engineering_strategy.run_feature_engineering,
-                condition=self._config["common"]["engineering"]
-            )
+            for window in range(self._config['common']["sliding_windows"]):
+                self._sliding_window = window
+                self._execute_if_not_dropped(
+                    self._feature_engineering_strategy.run_feature_engineering,
+                    condition=self._config["common"]["engineering"]
+                )
             if self._is_current_asset_dropped:
                 assets_to_remove.append(index)
 
@@ -1063,55 +1140,57 @@ class BaseDataProcessor(ABC):
     def _drop_current_asset(self):
         self._is_current_asset_dropped = True
 
-    def _clean_text(self, text: str) -> str:
-        text = re.sub(r"http\S+|www\S+|https\S+", "", text, flags=re.MULTILINE)
-        text = text.lower()
-        text = re.sub(r"\n", " ", text)
-        text = re.sub(r"\s+", " ", text)
-        text = text.strip()
-        return re.sub(" +", " ", text)
-
 
 class FutureCovariatesProcessor:
-    def __init__(self, config_manager, data_processor_helper):
+    def __init__(self, config_manager, data_processor_helper, sliding_window : int):
         self._config = config_manager.config
         self._data_processor_helper = data_processor_helper
-        self._data_processor_helper.market_dates[
-            RAW_ATTRIBUTES[0]
-        ] = self._data_processor_helper.market_dates.index
-        self._data_processor_helper.market_dates.index = pd.RangeIndex(
-            start=0, stop=len(self._data_processor_helper.market_dates)
-        )
+        self._sliding_window = sliding_window
+
+    def _initialize_variables(self):
+        market_dates = pd.DataFrame(
+            {RAW_ATTRIBUTES[0]: self._data_processor_helper.market_dates.index})
+
         self._future_covariates = (
             self._data_processor_helper.remove_first_transformed_data(
-                self._data_processor_helper.market_dates.copy()
+                market_dates
             )
         )
+
         self._train_data = self._data_processor_helper.obtain_train_data(
-            self._future_covariates.copy()
+            deepcopy(self._future_covariates), self._sliding_window
         )
+        if self._sliding_window !=0:
+            self._train_data = self._data_processor_helper.remove_first_transformed_data(self._train_data)
         self._predict_data = self._data_processor_helper.obtain_predict_data(
-            self._future_covariates.copy()
+            deepcopy(self._future_covariates), self._sliding_window
         )
         self._test_data = self._data_processor_helper.obtain_test_data(
-            self._future_covariates.copy()
+            deepcopy(self._future_covariates)
         )
         self._scaler = {}
 
     def run(self):
+        self._initialize_variables()
         self._train_data = self._add_covariates(
             self._train_data.copy(), fit=True
         )
+        self._train_data['date'] = self._train_data['date'].dt.strftime('%Y-%m-%d')
+
         self._predict_data = self._add_covariates(
             self._predict_data.copy(), fit=False
         )
+        self._predict_data['date'] = self._predict_data['date'].dt.strftime('%Y-%m-%d')
+
         self._test_data = self._add_covariates(
             self._test_data.copy(), fit=False
         )
+        self._test_data['date'] = self._test_data['date'].dt.strftime('%Y-%m-%d')
+
         self._data_processor_helper.data_to_write_ts = pd.concat(
             [self._train_data, self._predict_data, self._test_data]
-        )[self._config["inputs"]["future_covariates"]["data"]]
-        self._data_processor_helper.write_ts_to_csv(
+        )
+        self._data_processor_helper.write_ts_to_csv(self._sliding_window,
             self._config["inputs"]["future_covariates"]["common"]["model_data"]
         )
 
@@ -1120,7 +1199,7 @@ class FutureCovariatesProcessor:
         if covariates and "day" in covariates:
             df["day"] = df[RAW_ATTRIBUTES[0]].dt.day
             df["day"] = self._scale("day", df["day"], fit)
-        if "month" in covariates:
+        if covariates and "month" in covariates:
             df["month"] = df[RAW_ATTRIBUTES[0]].dt.month
             df["month"] = self._scale("month", df["month"], fit)
         return df
