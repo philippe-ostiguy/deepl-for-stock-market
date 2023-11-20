@@ -1,9 +1,9 @@
 common :
-  start_date : '2005-07-01'
-  end_date : '2023-06-15'
+  start_date : '2020-07-01'
+  end_date : '2023-11-20'
   max_missing_data : .02
-  fetching : False
-  preprocessing : False
+  fetching : True
+  preprocessing : True
   engineering : False
   sliding_windows : 3
   model_phase : 'train'
@@ -34,7 +34,7 @@ inputs:
   #    size: 100
     - source: 'av'
       data:
-        - 'SPY'
+        - 'NVDA'
 #        - 'set_dynamically_50_largest_stocks'
 #        - 'NATURAL_GAS'
 #        - '3month'

@@ -43,9 +43,11 @@ CUSTOM_MODEL = {
 class BaseModelBuilder(ABC):
     def __init__(
         self,
-        config_manager: ConfigManager = ConfigManager(),
+        config_manager: Optional[ConfigManager] = None,
         values_retriver = ModelValueRetriver()
     ):
+        if config_manager is None:
+            config_manager = ConfigManager()
         self._config_manager = config_manager
         self._config = self._config_manager.config
         self._window = None

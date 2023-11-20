@@ -4,13 +4,16 @@ from pytorch_forecasting import TemporalFusionTransformer, DeepAR, NHiTS, Recurr
 from app.shared.config_utils import ConfigManager, ModelValueRetriver
 from app.trainer.models.common import get_risk_rewards_metrics
 import logging
+from typing import Optional
 
 class PortfolioReturnMetric(Metric):
     higher_is_better = True
     full_state_update = True
     update_count = 0
 
-    def __init__(self, dist_sync_on_step=True, values_retriever = ModelValueRetriver(), config_manager = ConfigManager()):
+    def __init__(self, dist_sync_on_step=True, values_retriever = ModelValueRetriver(), config_manager : Optional [ConfigManager] = None):
+        if config_manager is None:
+            config_manager = ConfigManager()
         super().__init__(dist_sync_on_step=dist_sync_on_step)
 
         self._lower_index, self._upper_index = values_retriever.confidence_indexes

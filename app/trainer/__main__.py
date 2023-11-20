@@ -21,19 +21,20 @@
 #  OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
 #  OR OTHER DEALINGS IN THE SOFTWARE.
 ###############################################################################
-
+from app.shared.config_utils import InitProject, ConfigManager
 from app.shared.data_processor import (
     DataForModelSelector,
     FutureCovariatesProcessor,
     DataProcessorHelper
 )
 
-from app.shared.config_utils import InitProject, ConfigManager
-from app.trainer.factory import DataSourceFactory
+
+from app.shared.factory import DataSourceFactory
 from app.trainer.models.models import HyperpametersOptimizer, ModelBuilder
 import threading
 import torch
 import os
+
 
 if __name__ == "__main__":
     config_manager = ConfigManager()

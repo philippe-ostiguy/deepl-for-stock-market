@@ -40,7 +40,6 @@ warning_handler.setFormatter(warning_formatter)
 logging.getLogger().addHandler(warning_handler)
 
 
-
 class ConfigManager:
     def __init__(self, file: Optional[Text] = "config.yaml") -> None:
         self._config = self._load_config(file)
@@ -61,8 +60,10 @@ class ConfigManager:
         self.hyperparameters = {}
         self.hyperparameters_to_optimize = {}
         self._assign_hyperparameters_to_models()
-        self._validate_num_forecasts()
-        self._validate_model_metrics()
+        original_script = os.environ.get('ORIGINAL_SCRIPT', 'Unknown')
+        if not 'app/trader/__main__.py' in original_script :
+            self._validate_num_forecasts()
+            self._validate_model_metrics()
         self._config["common"]["best_model_path"] = \
             os.path.join(MODELS_PATH, "best_model")
         if self._config["common"]['preprocessing']:
@@ -442,10 +443,7 @@ class ConfigManager:
             return data_for_source
 
         else:
-            # for data in sources['data']:
-            #     for dataset in self._datasets:
-            #         shutil.copy(data["engineered"][dataset],
-            #                 data["model_data"][dataset])
+
             for output in self._config["output"]:
                 if source == output['source']:
                     output_config = output
@@ -473,8 +471,9 @@ def singleton(cls):
 
 @singleton
 class ModelValueRetriver:
-    def __init__(self, config_manager = ConfigManager()):
-
+    def __init__(self, config_manager : Optional[ConfigManager] = None):
+        if config_manager is None:
+            config_manager = ConfigManager()
         self._config = config_manager.config
         self._confidence_indexes = ''
 
@@ -499,9 +498,11 @@ class ModelValueRetriver:
 
 
 class InitProject:
-    def __init__(self, paths_to_create: list = PATHS_TO_CREATE, config : Optional[ConfigManager] = ConfigManager()):
+    def __init__(self, paths_to_create: list = PATHS_TO_CREATE, config_manager : Optional[ConfigManager] = None):
+        if config_manager is None:
+            config_manager = ConfigManager()
         self._paths_to_create = paths_to_create
-        self._config = config
+        self._config = config_manager
 
 
     @classmethod
