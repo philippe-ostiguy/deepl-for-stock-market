@@ -16,10 +16,10 @@ import numpy as np
 from sklearn.metrics import mean_squared_error, f1_score
 import threading
 from app.trainer.models.model_customizer import CustomNHiTS,CustomDeepAR,CustomTemporalFusionTransformer,CustomlRecurrentNetwork
-from app.shared.config_utils import ConfigManager, ModelValueRetriver
+from app.shared.config.config_utils import ConfigManager, ModelValueRetriver
 from app.shared.utils import clear_directory_content, read_json, save_json, read_csv_to_pd_formatted
 from app.trainer.models.common import get_risk_rewards_metrics
-from app.trainer.config.constants import DATASETS
+from app.shared.config.constants import DATASETS
 import pytz
 import datetime
 import re
@@ -47,7 +47,7 @@ class BaseModelBuilder(ABC):
         values_retriver = ModelValueRetriver()
     ):
         if config_manager is None:
-            config_manager = ConfigManager()
+            config_manager = ConfigManager(file='app/trainer/config.yaml')
         self._config_manager = config_manager
         self._config = self._config_manager.config
         self._window = None
@@ -655,7 +655,7 @@ class ModelBuilder(BaseModelBuilder):
         if os.path.exists(best_root_dir):
             shutil.rmtree(best_root_dir)
         shutil.copytree(self._model_dir, best_model_dir)
-        shutil.copy("config.yaml", best_root_dir)
+        shutil.copy("app/trainer/config.yaml", best_root_dir)
 
         ckpt_files = glob.glob(os.path.join(best_model_dir, '*.ckpt'))
         for file in ckpt_files:

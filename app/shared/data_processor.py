@@ -23,9 +23,7 @@
 ###############################################################################
 
 import pandas as pd
-from collections import deque
-from ratelimiter import RateLimiter
-from datetime import datetime, timedelta
+import yfinance as yf
 import numpy as np
 from copy import deepcopy
 import pickle
@@ -37,34 +35,32 @@ torch.set_default_dtype(torch.float32)
 from typing import Optional, List, Tuple, Union, Dict, Any, Callable
 from dotenv import load_dotenv
 from abc import ABC, abstractmethod
-import time
 from statsmodels.tsa.stattools import adfuller
-import requests
 import logging
 from contextlib import suppress
 import matplotlib.pyplot as plt
 import scipy.stats as stats
 from sklearn.decomposition import PCA
-
+from datetime import datetime
 load_dotenv()
 
-from app.shared.config_utils import ConfigManager
+from app.shared.config.config_utils import ConfigManager
 
 from app.shared.utils import (
     read_json,
     obtain_market_dates,
     read_csv_to_pd_formatted,
     write_to_csv_formatted,
-    write_pd_to_csv
+    write_pd_to_csv,
+    get_previous_market_date
 )
-from app.trainer.config.constants import (
+from app.shared.config.constants import (
     RAW_ATTRIBUTES,
     MODEL_PHASES,
     MODEL_DATA_PATH,
     ENGINEERED_DATA_TO_REMOVE,
     DATASETS
 )
-
 
 class DataProcessorHelper:
     def __init__(self, config_manager: ConfigManager):
@@ -283,10 +279,10 @@ class DataForModelSelector:
     def _check_data_before_model(self):
         folder_path = 'resources/input/model_data'
         all_files = os.listdir(folder_path)
-        test_files = [f for f in all_files if f.endswith('test.csv')]
+        test_files = [f for f in all_files if f.endswith('spy.csv')]
         if len(test_files) != 3:
             raise ValueError(
-                "There should be exactly 3 files ending with 'test.csv'")
+                "There should be exactly 3 files ending with 'spy.csv'")
         input_files = [f for f in test_files if 'input' in f]
         output_files = [f for f in test_files if 'output' in f]
         if len(input_files) != 2 or len(output_files) != 1:
@@ -345,7 +341,7 @@ class DataForModelSelector:
 
         if test_df['time'].iloc[0] != last_time_in_predict + 1:
             raise ValueError(
-                "The first 'time' value in 'test.csv' should be right after the last 'time' value in the last 'predict_{loop_item}.csv'")
+                "The first 'time' value in 'spy.csv' should be right after the last 'time' value in the last 'predict_{loop_item}.csv'")
 
 
     def _make_features_removal(self) -> None:
@@ -863,10 +859,10 @@ class OutputDataEngineering(BaseInputOutputDataEngineering):
         )
 
         target_column = (self._processor._config["data"][self._processor._current_data_index]['asset'] + '_target').lower()
-        if '1. open' in self._engineered_data.columns and '4. close' in self._engineered_data.columns:
+        if 'open' in self._engineered_data.columns and 'close' in self._engineered_data.columns:
             self._engineered_data[target_column] = (
-            self._engineered_data['4. close']
-            / self._engineered_data["1. open"]
+            self._engineered_data['close']
+            / self._engineered_data["open"]
         ) - 1
         else :
             raise ValueError('Columns most have open and close name')
@@ -905,13 +901,15 @@ class OutputDataEngineering(BaseInputOutputDataEngineering):
 class BaseDataProcessor(ABC):
     def __init__(
         self,
-        config: dict,
+        config : dict,
+        config_manager : ConfigManager,
         data_processor_helper: DataProcessorHelper,
         is_input_feature: Optional[bool] = True,
         model_phase: Optional[str] = MODEL_PHASES,
         **kwargs,
     ):
         super().__init__()
+        self._running_app = config_manager.running_app
         self._config = config
         self._model_phase = model_phase
         self._is_current_asset_dropped = False
@@ -929,10 +927,10 @@ class BaseDataProcessor(ABC):
             )
 
 
+
     def _run_common_fetch(self):
         start_date = self._config["common"]["start_date"]
         end_date = self._config["common"]["end_date"]
-        write_new_data = False
         try :
             self._raw_data = read_csv_to_pd_formatted(self._config["data"][self._current_data_index]["raw"])
         except FileNotFoundError :
@@ -945,19 +943,28 @@ class BaseDataProcessor(ABC):
         pd_datetime = pd.to_datetime(self._raw_data['date'])
         first_date = pd_datetime.iloc[0]
         last_date = pd_datetime.iloc[-1]
-
-
+        last_market_date_raw,_ = get_previous_market_date(datetime.now())
+        last_market_date = pd.Timestamp(last_market_date_raw)
+        write_older_data = False
+        write_newer_data = False
         if first_date > pd.to_datetime(self._config["common"]["start_date"]):
+            write_older_data = True
+
+        if last_date < pd.to_datetime(self._config["common"]["end_date"]) and last_date < last_market_date:
+            write_newer_data = True
+
+        if write_older_data and write_newer_data:
+            self._raw_data = pd.concat([self._run_fetch(), self._raw_data],
+                                       ignore_index=True)
+        elif write_older_data:
             self._config["common"]["end_date"] = (first_date - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
             self._raw_data = pd.concat([self._run_fetch(),self._raw_data],ignore_index=True)
-            write_new_data = True
-        if last_date < pd.to_datetime(self._config["common"]["end_date"]):
+        elif write_newer_data:
             self._config["common"]["start_date"] = (last_date + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
             self._raw_data = pd.concat([self._run_fetch(), self._raw_data],
                                        ignore_index=True)
-            write_new_data = True
 
-        if write_new_data :
+        if write_older_data or write_newer_data:
             self._raw_data.drop_duplicates(subset=[RAW_ATTRIBUTES[0]], keep='first', inplace=True)
             write_pd_to_csv(data=self._raw_data,file=self._config["data"][self._current_data_index]["raw"])
             self._config["common"]["start_date"] = start_date
@@ -982,12 +989,13 @@ class BaseDataProcessor(ABC):
                 self._run_preprocess,
                 condition=self._config["common"]["preprocessing"]
             )
-            for window in range(self._config['common']["sliding_windows"]):
-                self._sliding_window = window
-                self._execute_if_not_dropped(
-                    self._feature_engineering_strategy.run_feature_engineering,
-                    condition=self._config["common"]["engineering"]
-                )
+            if self._running_app != 'trader':
+                for window in range(self._config['common']["sliding_windows"]):
+                    self._sliding_window = window
+                    self._execute_if_not_dropped(
+                        self._feature_engineering_strategy.run_feature_engineering,
+                        condition=self._config["common"]["engineering"]
+                    )
             if self._is_current_asset_dropped:
                 assets_to_remove.append(index)
 
@@ -1217,10 +1225,10 @@ class FutureCovariatesProcessor:
 
 class MacroTrends(BaseDataProcessor):
     def __init__(
-        self, specific_config, data_processor_helper, is_input_feature, **kwargs
+        self, specific_config,config_manager, data_processor_helper, is_input_feature, **kwargs
     ):
         super().__init__(
-            specific_config, data_processor_helper, is_input_feature, **kwargs
+            specific_config,config_manager, data_processor_helper, is_input_feature, **kwargs
         )
     def _run_fetch(self):
         pass
@@ -1230,10 +1238,10 @@ class MacroTrends(BaseDataProcessor):
 
 class FRED(BaseDataProcessor):
     def __init__(
-        self, specific_config, data_processor_helper, is_input_feature, **kwargs
+        self, specific_config,config_manager, data_processor_helper, is_input_feature, **kwargs
     ):
         super().__init__(
-            specific_config, data_processor_helper, is_input_feature, **kwargs
+            specific_config,config_manager, data_processor_helper, is_input_feature, **kwargs
         )
 
     def _run_fetch(self) -> pd.DataFrame:
@@ -1251,114 +1259,27 @@ class FRED(BaseDataProcessor):
 
         return df
 
-class AlphaVantage(BaseDataProcessor):
+class YahooFinance(BaseDataProcessor):
     def __init__(
-        self,
-        specific_config,
-        data_processor_helper,
-        is_input_feature,
-        **kwargs: Any,
+        self, specific_config, config_manager, data_processor_helper, is_input_feature, **kwargs
     ):
         super().__init__(
-            specific_config, data_processor_helper, is_input_feature, **kwargs
+            specific_config, config_manager,data_processor_helper, is_input_feature, **kwargs
         )
-        self._endpoints = read_json("resources/configs/av_api_support.json")
-        self._av_key = os.getenv("ALPHA_VANTAGE_KEY")
-        self._requests_last_minute = deque(maxlen=5)
-        self._requests_today = 0
-        self._rate_limiter = RateLimiter(max_calls=100, period=24*3600)
-
-    def _fetch_data(self) -> Tuple[List, str]:
-        if self._requests_today >= 100:
-            logging.warning(
-                f"Not fetching data for {self._config['data'][self._current_data_index]['asset']} "
-                f"on Alpha Vantage. Reach the maximum of 100 on a day"
-            )
-            self._drop_current_asset()
-
-        while len(self._requests_last_minute) == 5 and datetime.now() - self._requests_last_minute[0] < timedelta(minutes=1):
-            time.sleep(5)
-
-        with self._rate_limiter:
-            data = self._config["data"][self._current_data_index].get("asset")
-            endpoint = next(
-                k
-                for k, v in self._endpoints.items()
-                if data in v["supported_symbols"]
-            )
-            input_keys = self._endpoints[endpoint]["response_helpers"][
-                "input_key_name"
-            ]
-            concatenated_key = "".join(input_keys)
-            self._endpoints[endpoint]["api_parameters"][concatenated_key] = data
-            self._endpoints[endpoint]["api_parameters"]["apikey"] = self._av_key
-            response = self._call_rest_api(
-                self._endpoints[endpoint]["api_parameters"]
-            ).json()
-
-            response_data = response[
-                self._endpoints[endpoint]["response_helpers"]["response"]
-            ]
-
-
-        self._requests_last_minute.append(datetime.now())
-        self._requests_today += 1
-
-        return response_data, endpoint
 
     def _run_fetch(self) -> pd.DataFrame:
-        data_to_write, endpoint = self._fetch_data()
-        return self._save_to_dataframe(
-            endpoint,
-            data_to_write
-        )
+        asset = self._config['data'][self._current_data_index].get('asset')
+        data = yf.download(asset,
+                           start=self._config['common']['start_date'],
+                           end=self._config['common']['end_date'])
+        data.reset_index(inplace=True)
+        data['Date'] = pd.to_datetime(data['Date']).dt.strftime('%Y-%m-%d')
+        data.columns = data.columns.str.lower()
+        test_data = data[-120:]
+        test_data = test_data.copy()
+        test_data['return'] = test_data['close'] / test_data['open'] - 1
+        std_dev = test_data['return'].std()
+        if std_dev == 0:
+            raise ValueError(f'std deviation is 0 for {asset} from yahoo finance data')
 
-    def _obtain_endpoint(self, key: str) -> Dict:
-        for endpoint in self._endpoints:
-            if key == endpoint:
-                return endpoint
-
-    def _call_rest_api(self, params: dict) -> requests.Response:
-        url = "https://www.alphavantage.co/query"
-        return requests.get(url=url, params=params)
-
-    def _save_to_dataframe(
-            self,
-            endpoint: str,
-            data: Union[Dict[str, Dict[str, str]], List[Dict[str, str]]]
-    ) -> pd.DataFrame:
-        df = pd.DataFrame(columns=self._endpoints[endpoint]["response_helpers"][
-            "returned_values"])
-
-        if self._endpoints[endpoint]["response_helpers"]["nested_response"]:
-            df = self._write_nested_response(df, endpoint, data)
-        else:
-            df = self._write_non_nested_response(df, data)
-
-        return df
-
-    def _write_nested_response(
-            self,
-            df: pd.DataFrame,
-            index: int,
-            data: Dict[str, Dict[str, str]]
-    ) -> pd.DataFrame:
-        for date, point in reversed(data.items()):
-            row = {
-                col: point[col]
-                for col in
-                self._endpoints[index]["response_helpers"]["returned_values"][
-                1:]
-            }
-            row[RAW_ATTRIBUTES[0]] = date
-            df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
-        return df
-
-    def _write_non_nested_response(
-            self,
-            df: pd.DataFrame,
-            data: List[Dict[str, str]]
-    ) -> pd.DataFrame:
-        for item in reversed(data):
-            df = pd.concat([df, pd.DataFrame([item])], ignore_index=True)
-        return df
+        return data

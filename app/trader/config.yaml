@@ -1,0 +1,45 @@
+common :
+  start_date : '2002-07-01'
+  end_date : '2023-06-15'
+  max_missing_data : .02
+  fetching : True
+  preprocessing : True
+  model_phase : 'predict'
+
+position_management :
+  trading_capital : 37000
+  risk_per_trade : 0.01
+  return_in_quantile : 0.02
+  quantile : 95
+
+inputs:
+  past_covariates :
+    - source: 'yahoo'
+      data:
+        - 'GC=F'
+        - 'SPY'
+        - 'ZW=F'
+        - 'SI=F'
+#        - 'set_dynamically_50_largest_stocks'
+#        - 'NATURAL_GAS'
+#        - '3month'
+#        - '10year'
+#        - '2year'
+#        - 'EUR'
+#        - 'WTI'
+#        - 'MSFT'
+#        - 'GOOGL'
+#        - 'AAPL'
+#        - 'AMZN'
+#    - source : 'fred'
+#      data:
+#        - 'set_dynamically'
+#        - 'T5YIE'
+#        - 'T10YIE'
+#        - 'DEXUSNZ'
+#        - 'VIXCLS'
+#    - source : 'macrotrends'
+#      data :
+#         - 'set_dynamically'
+#         - 'wheat'
+#         - 'corn'

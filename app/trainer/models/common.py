@@ -1,10 +1,10 @@
 import torch
-from app.shared.config_utils import ConfigManager
+from app.shared.config.config_utils import ConfigManager
 from typing import Optional
 
 def get_risk_rewards_metrics(daily_returns : torch.Tensor, config_manager : Optional[ConfigManager] = None) -> dict:
     if config_manager is None:
-        config_manager = ConfigManager()
+        config_manager = ConfigManager(file='app/trainer/config.yaml')
     metrics = {}
     if daily_returns.shape[0] <= config_manager.config['common']['min_nb_trades']:
         metrics['annualized_return'] = torch.tensor(0.0)

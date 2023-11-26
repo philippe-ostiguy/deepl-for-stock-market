@@ -21,7 +21,7 @@
 #  OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
 #  OR OTHER DEALINGS IN THE SOFTWARE.
 ###############################################################################
-from app.shared.config_utils import InitProject, ConfigManager
+from app.shared.config.config_utils import InitProject, ConfigManager
 from app.shared.data_processor import (
     DataForModelSelector,
     FutureCovariatesProcessor,
@@ -37,9 +37,9 @@ import os
 
 
 if __name__ == "__main__":
-    config_manager = ConfigManager()
+    config_manager = ConfigManager(file='app/trainer/config.yaml')
     InitProject.create_common_path()
-    InitProject.create_custom_path()
+    InitProject.create_custom_path(file='app/trainer/config.yaml')
 
     data_processor_helper = DataProcessorHelper(config_manager=config_manager)
     for source, is_input in config_manager.get_sources():

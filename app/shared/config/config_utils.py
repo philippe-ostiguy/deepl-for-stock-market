@@ -1,5 +1,5 @@
 from app.shared.utils import read_json, obtain_market_dates, clear_directory_content
-from app.trainer.config.constants import (
+from app.shared.config.constants import (
     RAW_PATH,
     PREPROCESSED_PATH,
     ENGINEERED_PATH,
@@ -15,6 +15,7 @@ from app.trainer.config.model_config import (
     LOSS
 )
 
+from datetime import datetime
 from copy import deepcopy
 from typing import List, Dict, Text, Any, Optional, Tuple, Union
 import os
@@ -41,36 +42,46 @@ logging.getLogger().addHandler(warning_handler)
 
 
 class ConfigManager:
-    def __init__(self, file: Optional[Text] = "config.yaml") -> None:
+    def __init__(self, file) -> None:
         self._config = self._load_config(file)
-        self._add_ticker_dynamically()
-        self._assign_inputs()
-        self._config['specific_config'] = {}
-        self._assign_common_config()
-        self._config["output"] = self._add_data_files_output(
-            self._config["output"]
-        )
-
-        self._models_with_hyper = read_json(
-            "resources/configs/models_args.json"
-        )
-        self._models_support = read_json(
-            "resources/configs/models_support.json"
-        )
-        self.hyperparameters = {}
-        self.hyperparameters_to_optimize = {}
-        self._assign_hyperparameters_to_models()
         original_script = os.environ.get('ORIGINAL_SCRIPT', 'Unknown')
-        if not 'app/trader/__main__.py' in original_script :
+        self._models_with_hyper = read_json(
+                "resources/configs/models_args.json"
+            )
+        self._models_support = read_json(
+                "resources/configs/models_support.json"
+            )
+        if 'app/trader/__main__.py' in original_script:
+            self.running_app = 'trader'
+        else :
+            self.running_app = 'trainer'
+        if self.running_app != 'trader':
             self._validate_num_forecasts()
             self._validate_model_metrics()
+            if self._config["common"]['engineering']:
+                clear_directory_content(ENGINEERED_PATH)
+                clear_directory_content(MODEL_DATA_PATH)
+        else :
+            self._config["common"]["end_date"] = datetime.now().strftime("%Y-%m-%d")
+            if self._config['position_management']['quantile'] < 1 or self._config['position_management']['quantile'] >100 :
+                raise ValueError(f"Quantile for position management must be between 1 and 100. "
+                                 f"Current value {self._config['position_management']['quantile']}")
+
+        self._add_ticker_dynamically()
+        self._assign_inputs()
+        if self.running_app != 'trader':
+            self._config['specific_config'] = {}
+            self._assign_common_config()
+            self._config["output"] = self._add_data_files_output(
+                self._config["output"]
+            )
+            self.hyperparameters = {}
+            self.hyperparameters_to_optimize = {}
+            self._assign_hyperparameters_to_models()
         self._config["common"]["best_model_path"] = \
             os.path.join(MODELS_PATH, "best_model")
         if self._config["common"]['preprocessing']:
             clear_directory_content(PREPROCESSED_PATH)
-        if self._config["common"]['engineering']:
-            clear_directory_content(ENGINEERED_PATH)
-            clear_directory_content(MODEL_DATA_PATH)
 
     def _assign_common_config(self):
         common_config = self._config["hyperparameters"]["common"]
@@ -217,14 +228,14 @@ class ConfigManager:
         ] = self._add_data_files_input(
             self._config["inputs"]["past_covariates"]["sources"]
         )
-
-        self._config["inputs"]["future_covariates"]["common"] = {}
-        self._config["inputs"]["future_covariates"][
-            "common"
-        ] = self._add_model_data_path(
-            self._config["inputs"]["future_covariates"]["common"],
-            "input_future",
-        )
+        if self.running_app != 'trader' :
+            self._config["inputs"]["future_covariates"]["common"] = {}
+            self._config["inputs"]["future_covariates"][
+                "common"
+            ] = self._add_model_data_path(
+                self._config["inputs"]["future_covariates"]["common"],
+                "input_future",
+            )
 
 
     def _assign_common_inputs(self):
@@ -455,7 +466,10 @@ class ConfigManager:
             (src["source"], True)
             for src in self._config["inputs"]["past_covariates"]["sources"]
         ]
-        output_sources = [(output['source'], False) for output in self._config['output']]
+        if self.running_app != 'trader':
+            output_sources = [(output['source'], False) for output in self._config['output']]
+        else :
+            output_sources = []
         return input_sources + output_sources
 
 
@@ -469,45 +483,21 @@ def singleton(cls):
 
     return get_instance
 
-@singleton
-class ModelValueRetriver:
-    def __init__(self, config_manager : Optional[ConfigManager] = None):
-        if config_manager is None:
-            config_manager = ConfigManager()
-        self._config = config_manager.config
-        self._confidence_indexes = ''
-
-    @property
-    def confidence_indexes(self):
-        if self._confidence_indexes:
-            return self._confidence_indexes
-        confidence_level = \
-            self._config["hyperparameters"]["common"][
-                "confidence_level"] if "confidence_level" in \
-                                       self._config["hyperparameters"][
-                                           "common"] else .5
-        likelihood = self._config["hyperparameters"]["common"][
-            "likelihood"]
-        upper_index = likelihood.index(confidence_level)
-        lower_index = len(likelihood) - 1 - upper_index
-        return lower_index, upper_index
-
-    @confidence_indexes.setter
-    def confidence_indexes(self, values: tuple):
-        self._confidence_indexes = values
-
 
 class InitProject:
-    def __init__(self, paths_to_create: list = PATHS_TO_CREATE, config_manager : Optional[ConfigManager] = None):
+    def __init__(self,
+                 paths_to_create: list = PATHS_TO_CREATE,
+                 config_path : str = None,
+                 config_manager : Optional[ConfigManager] = None):
         if config_manager is None:
-            config_manager = ConfigManager()
+            config_manager = ConfigManager(file=config_path)
         self._paths_to_create = paths_to_create
         self._config = config_manager
 
 
     @classmethod
-    def create_custom_path(cls) -> Any:
-        instance = cls()
+    def create_custom_path(cls,file : str) -> Any:
+        instance = cls(config_path=file)
 
         paths_to_create = []
         for model in instance._config.config['hyperparameters']['models']:

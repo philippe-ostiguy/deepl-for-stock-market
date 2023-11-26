@@ -1,7 +1,8 @@
 from torchmetrics import Metric
 import torch
 from pytorch_forecasting import TemporalFusionTransformer, DeepAR, NHiTS, RecurrentNetwork
-from app.shared.config_utils import ConfigManager, ModelValueRetriver
+from app.shared.config.config_utils import ConfigManager
+from app.trainer.config.config_utils import ModelValueRetriver
 from app.trainer.models.common import get_risk_rewards_metrics
 import logging
 from typing import Optional
@@ -13,7 +14,7 @@ class PortfolioReturnMetric(Metric):
 
     def __init__(self, dist_sync_on_step=True, values_retriever = ModelValueRetriver(), config_manager : Optional [ConfigManager] = None):
         if config_manager is None:
-            config_manager = ConfigManager()
+            config_manager = ConfigManager(file='app/trainer/config.yaml')
         super().__init__(dist_sync_on_step=dist_sync_on_step)
 
         self._lower_index, self._upper_index = values_retriever.confidence_indexes

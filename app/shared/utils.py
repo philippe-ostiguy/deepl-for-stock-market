@@ -1,26 +1,3 @@
-# ###############################################################################
-#
-#  The MIT License (MIT)
-#  Copyright (c) 2023 Philippe Ostiguy
-#
-#  Permission is hereby granted, free of charge, to any person obtaining a copy
-#  of this software and associated documentation files (the "Software"), to deal
-#  in the Software without restriction, including without limitation the rights
-#  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-#  copies of the Software, and to permit persons to whom the Software is
-#  furnished to do so, subject to the following conditions:
-#
-#  The above copyright notice and this permission notice shall be included in
-#  all copies or substantial portions of the Software.
-#
-#  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-#  EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-#  MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-#  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-#  DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-#  OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
-#  OR OTHER DEALINGS IN THE SOFTWARE.
-###############################################################################
 import pandas_market_calendars as mcal
 from datetime import datetime, timedelta
 from pytz import timezone, UTC
@@ -29,7 +6,7 @@ import json
 import pandas as pd
 import shutil
 
-from app.trainer.config.constants import (
+from app.shared.config.constants import (
     RAW_ATTRIBUTES,
 )
 
@@ -84,8 +61,8 @@ def est_dt_to_epoch(dt: datetime) -> int:
     return int(utc_dt.timestamp())
 
 
-def obtain_market_dates(start_date: str, end_date: str) -> pd.DataFrame:
-    nyse = mcal.get_calendar("NYSE")
+def obtain_market_dates(start_date: str, end_date: str, market : Optional[str] = "NYSE") -> pd.DataFrame:
+    nyse = mcal.get_calendar(market)
     market_open_dates = nyse.schedule(
         start_date=start_date,
         end_date=end_date,
@@ -94,8 +71,8 @@ def obtain_market_dates(start_date: str, end_date: str) -> pd.DataFrame:
 
 
 @lru_cache(maxsize=None)
-def get_previous_market_date(date, last_market_date=None):
-    nyse = mcal.get_calendar("NYSE")
+def get_previous_market_date(date, last_market_date=None, market : Optional[str]= "NYSE"):
+    nyse = mcal.get_calendar(market)
     if last_market_date is None:
         start_date = date - timedelta(days=30)
     else:
