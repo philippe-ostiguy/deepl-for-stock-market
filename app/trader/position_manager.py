@@ -19,7 +19,7 @@ class PositionManager:
             self._input_file = self._config["data"][index]["preprocessed"]
             self._asset_details.append({'asset' : self._config['data'][index]['asset']})
             self._get_position_size()
-            self._enter_market()
+            #self._enter_market()
             self._enter_stop_loss()
 
     def _enter_market(self):
@@ -36,8 +36,8 @@ class PositionManager:
         bars = self._ib.reqHistoricalData(
             stock,
             endDateTime='',
-            durationStr='1 D',
-            barSizeSetting='1 min',
+            durationStr='120 D',
+            barSizeSetting='1 D',
             whatToShow='TRADES',
             useRTH=True,
             formatDate=1
@@ -57,7 +57,6 @@ class PositionManager:
         asset = self._asset_details[self._index]["asset"]
         self._pos_management = self._config_manager.config['position_management']
         data  = read_csv_to_pd_formatted(self._input_file)
-        data = data[-120:]
         data = data.copy()
         data['return'] = data['close'] / data['open'] - 1
         std_dev = data['return'].std()
@@ -74,4 +73,5 @@ class PositionManager:
         self._asset_details[self._index]['position_size'] = position_size
         self._asset_details[self._index]['stop_loss'] = stop_loss
         self._asset_details[self._index]['nb_shares'] = nb_shares_round
-        print(f'{asset} position :{position_size} with stop loss :  {stop_loss}')
+        print(f'{asset} position :{position_size} with stop loss :  {stop_loss} and {nb_shares_round} shares')
+        t = 5

@@ -15,7 +15,7 @@ from app.trainer.config.model_config import (
     LOSS
 )
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from copy import deepcopy
 from typing import List, Dict, Text, Any, Optional, Tuple, Union
 import os
@@ -62,7 +62,8 @@ class ConfigManager:
                 clear_directory_content(ENGINEERED_PATH)
                 clear_directory_content(MODEL_DATA_PATH)
         else :
-            self._config["common"]["end_date"] = datetime.now().strftime("%Y-%m-%d")
+            self._config["common"]["end_date"] = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+            self._config["common"]["start_date"] = (datetime.now() - timedelta(days=self._config["common"]["nb_of_days"])).strftime("%Y-%m-%d")
             if self._config['position_management']['quantile'] < 1 or self._config['position_management']['quantile'] >100 :
                 raise ValueError(f"Quantile for position management must be between 1 and 100. "
                                  f"Current value {self._config['position_management']['quantile']}")
@@ -348,7 +349,6 @@ class ConfigManager:
         common = configuration["common"]
         if (
             "max_missing_data" not in common
-            or not isinstance(common["max_missing_data"], float)
             or not 0 <= common["max_missing_data"] <= 1
         ):
             configuration["common"]["max_missing_data"] = 0.01

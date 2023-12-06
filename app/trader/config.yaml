@@ -1,6 +1,5 @@
 common :
-  start_date : '2002-07-01'
-  end_date : '2023-06-15'
+  nb_of_days : 180 #include non-trading day
   max_missing_data : .02
   fetching : True
   preprocessing : True
@@ -9,17 +8,19 @@ common :
 position_management :
   trading_capital : 37000
   risk_per_trade : 0.01
-  return_in_quantile : 0.02
-  quantile : 95
+  return_in_quantile : 0.01
+  quantile : 90
 
 inputs:
   past_covariates :
     - source: 'yahoo'
       data:
-        - 'GC=F'
-        - 'SPY'
-        - 'ZW=F'
-        - 'SI=F'
+        - "DOLE"
+#        - 'GC=F'
+#        - 'YM=F'
+#        - 'SPY'
+#        - 'ZW=F'
+#        - 'SI=F'
 #        - 'set_dynamically_50_largest_stocks'
 #        - 'NATURAL_GAS'
 #        - '3month'

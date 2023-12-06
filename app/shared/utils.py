@@ -69,6 +69,11 @@ def obtain_market_dates(start_date: str, end_date: str, market : Optional[str] =
     )
     return market_open_dates
 
+def add_days_to_date(original_date, days : int = 0) -> str:
+    date_object = datetime.strptime(original_date, "%Y-%m-%d")
+    new_date_object = date_object + timedelta(days=days)
+    return new_date_object.strftime("%Y-%m-%d")
+
 
 @lru_cache(maxsize=None)
 def get_previous_market_date(date, last_market_date=None, market : Optional[str]= "NYSE"):

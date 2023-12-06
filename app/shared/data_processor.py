@@ -52,7 +52,8 @@ from app.shared.utils import (
     read_csv_to_pd_formatted,
     write_to_csv_formatted,
     write_pd_to_csv,
-    get_previous_market_date
+    get_previous_market_date,
+    add_days_to_date
 )
 from app.shared.config.constants import (
     RAW_ATTRIBUTES,
@@ -1269,9 +1270,11 @@ class YahooFinance(BaseDataProcessor):
 
     def _run_fetch(self) -> pd.DataFrame:
         asset = self._config['data'][self._current_data_index].get('asset')
+        new_date_str = add_days_to_date(self._config['common']['end_date'],1)
+
         data = yf.download(asset,
                            start=self._config['common']['start_date'],
-                           end=self._config['common']['end_date'])
+                           end=new_date_str)
         data.reset_index(inplace=True)
         data['Date'] = pd.to_datetime(data['Date']).dt.strftime('%Y-%m-%d')
         data.columns = data.columns.str.lower()
@@ -1283,3 +1286,4 @@ class YahooFinance(BaseDataProcessor):
             raise ValueError(f'std deviation is 0 for {asset} from yahoo finance data')
 
         return data
+
