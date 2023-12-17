@@ -15,8 +15,8 @@ inputs:
   past_covariates :
     - source: 'yahoo'
       data:
-        - "DOLE"
-#        - 'GC=F'
+#        - "MOD"
+        - 'CEG'
 #        - 'YM=F'
 #        - 'SPY'
 #        - 'ZW=F'
