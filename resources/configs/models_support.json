@@ -1,8 +1,4 @@
 {
-    "attributes_to_discard": [
-        "volume",
-        "split coefficient"
-    ],
     "supported_future_inputs": [
         "day",
         "month"

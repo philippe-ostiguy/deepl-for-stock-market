@@ -3,9 +3,7 @@ from typing import Optional
 from app.shared.data_processor import (
     BaseDataProcessor,
     YahooFinance,
-    FRED,
-    MacroTrends,
-)
+    FRED)
 
 
 class DataSourceFactory:
@@ -27,10 +25,5 @@ class DataSourceFactory:
             return FRED(
                 specific_config=data_for_source,config_manager=config_manager, data_processor_helper=data_processor_helper, is_input_feature=is_input_feature
             )
-        elif source == "macrotrends":
-            return MacroTrends(
-                specific_config=data_for_source,config_manager=config_manager, data_processor_helper=data_processor_helper, is_input_feature=is_input_feature
-            )
-
         else:
             raise ValueError(f"Unknown data type: {source}")

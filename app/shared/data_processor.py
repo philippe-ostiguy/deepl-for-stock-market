@@ -200,6 +200,12 @@ class DataForModelSelector:
                             continue
                         new_data = read_csv_to_pd_formatted(file, 'time',
                                                             window=window if dataset.lower() != 'test' else '')
+
+                        if not (new_data['date'].equals(self._all_output['date']) and new_data['time'].equals(self._all_output['time'])):
+                            raise ValueError(
+                                f"Mismatch in 'time' and 'date' values for files in loop item {window}")
+                        if 'date' in new_data.columns:
+                            new_data.drop('date', axis = 1, inplace=True)
                         self._all_output= self._all_output.merge(new_data, on='time', how='outer')
                         last_data = data
                 if not last_data:
@@ -215,90 +221,115 @@ class DataForModelSelector:
                 last_data["model_data"]['train'], "time", window=window
             )
 
-            for input_in_config in self._config["inputs"]["past_covariates"][
+            for current_source in self._config["inputs"]["past_covariates"][
                 "sources"
             ]:
-                for current_input in input_in_config["data"]:
+                for current_input in current_source["data"]:
                     train_file_path = current_input["engineered"]["train"].replace('.csv', f'_{window}.csv')
                     predict_file_path = current_input["engineered"]["predict"].replace('.csv', f'_{window}.csv')
                     test_file_path = current_input["engineered"]["test"]
                     if not os.path.exists(test_file_path):
                         continue
                     asset_name = current_input["asset"]
-                    data_train = self._load_and_prefix_data(
+                    self._tempo_data_train = self._load_and_prefix_data(
                         train_file_path, asset_name, ["time","date"]
                     )
 
-                    data_predict = self._load_and_prefix_data(
+                    self._tempo_data_predict = self._load_and_prefix_data(
                         predict_file_path, asset_name, ["time","date"]
                     )
 
-                    data_test = self._load_and_prefix_data(
+                    self._tempo_data_test = self._load_and_prefix_data(
                         test_file_path, asset_name, ["time","date"]
                     )
 
                     if not self._output_data_train["time"].equals(
-                        data_train["time"]
+                        self._tempo_data_train["time"]
                     ):
                         raise ValueError(
                             f"time values are not consistent in {asset_name}"
                         )
 
-
-                    self._data_for_model_train = data_train
-                    self._data_for_model_predict = data_predict
-                    self._data_for_model_test = data_test
+                    self._update_data_models(asset_name=asset_name)
 
             if self._config["common"]["model_phase"] == "train" and self._config["common"]["features_engineering"]["is_using_pca"]:
                 self._make_features_removal()
 
-
-            write_to_csv_formatted(
-                self._data_for_model_train,
-                self._config["inputs"]["past_covariates"]["common"]["model_data"][
-                    "train"
-                ],
-                'time', window=window
-            )
-            write_to_csv_formatted(
-                self._data_for_model_predict,
-                self._config["inputs"]["past_covariates"]["common"]["model_data"][
-                    "predict"
-                ],
-                'time', window=window
-            )
-            write_to_csv_formatted(
-                self._data_for_model_test,
-                self._config["inputs"]["past_covariates"]["common"]["model_data"][
-                    "test"
-                ],
-                'time'
-            )
+            self._write_datasets_to_csv(window)
+            self._data_for_model_train = None
+            self._data_for_model_predict = None
+            self._data_for_model_test = None
 
         self._check_data_before_model()
 
+
+    def _update_data_models(self,asset_name):
+        if self._data_for_model_train is None:
+            self._set_initial_data()
+        else:
+            self._merge_with_existing_data(asset_name)
+
+
+    def _set_initial_data(self):
+        for dataset_type in DATASETS:
+            setattr(self, f'_data_for_model_{dataset_type}', getattr(self,f'_tempo_data_{dataset_type}'))
+
+
+    def _merge_with_existing_data(self, asset_name):
+        duplicated_columns = self._get_duplicated_columns(self._tempo_data_train)
+        if duplicated_columns:
+            raise ValueError(f"Duplicate columns found for asset {asset_name}: {', '.join(duplicated_columns)}")
+
+        self._data_for_model_train = self._merge_with_check(self._data_for_model_train, self._tempo_data_train, ['time', 'date'])
+        self._data_for_model_predict = self._merge_with_check(self._data_for_model_predict, self._tempo_data_predict, ['time', 'date'])
+        self._data_for_model_test = self._merge_with_check(self._data_for_model_test, self._tempo_data_test, ['time', 'date'])
+
+    def _merge_with_check(self, df1, df2, keys):
+        for key in keys:
+            if not df1[key].equals(df2[key]):
+                raise ValueError(f"Values in the '{key}' column do not match between dataframes.")
+        df2 = df2.drop(columns=['date'])
+
+        return pd.merge(df1, df2, on="time", how="left")
+
+    def _get_duplicated_columns(self, data_train):
+        duplicated_columns = self._data_for_model_train.columns.intersection(data_train.columns)
+        return [col for col in duplicated_columns if col not in ["time", "date"]]
+
+    def _write_datasets_to_csv(self, window : int):    
+        for dataset_type in DATASETS:
+            dataset = getattr(self, f'_data_for_model_{dataset_type}')
+            file_path = self._config["inputs"]["past_covariates"]["common"]["model_data"][dataset_type]
+    
+            if dataset_type in ['train', 'predict']:
+                write_to_csv_formatted(dataset, file_path, 'time', window=window)
+            else:
+                write_to_csv_formatted(dataset, file_path, 'time')
+
+    
     def _check_data_before_model(self):
         folder_path = 'resources/input/model_data'
         all_files = os.listdir(folder_path)
-        test_files = [f for f in all_files if f.endswith('spy.csv')]
-        if len(test_files) != 3:
-            raise ValueError(
-                "There should be exactly 3 files ending with 'spy.csv'")
-        input_files = [f for f in test_files if 'input' in f]
-        output_files = [f for f in test_files if 'output' in f]
-        if len(input_files) != 2 or len(output_files) != 1:
-            raise ValueError("There should be 2 input files and 1 output file")
-        df1 = pd.read_csv(os.path.join(folder_path, input_files[0]))
-        df2 = pd.read_csv(os.path.join(folder_path, input_files[1]))
-        df3 = pd.read_csv(os.path.join(folder_path, output_files[0]))
-        if len(df1) != len(df2) or not (
-        df1[['time', 'date']].equals(df2[['time', 'date']])) or not (
-        df1[['time', 'date']].equals(df3[['time', 'date']])):
-            raise ValueError(
-                "Files should have the same length and identical 'time' and 'date' values")
+        min_forecasts = self._config["common"]["min_validation_forecasts"]
+        encoder_decoder_length =  self._config["hyperparameters"]["common"]["max_encoder_length"] + \
+                                  self._config["hyperparameters"]["common"]["max_prediction_length"]
+        for file in all_files :
+            df = pd.read_csv(os.path.join(folder_path, file))
+            if len(df) < (min_forecasts + encoder_decoder_length):
+                raise ValueError(
+                    f"Not enough data for {file}. Got {len(df)}, required at least {min_forecasts + encoder_decoder_length}"
+                )
 
         for dataset in DATASETS:
             if dataset == 'test':
+                test_files = [f for f in all_files if
+                              f.endswith(f'test.csv')]
+                dataframes = [pd.read_csv(os.path.join(folder_path, file)) for file
+                              in test_files]
+                if not all(len(df) == len(dataframes[0])
+                           and df[['time', 'date']].equals(dataframes[0][['time', 'date']]) for df in dataframes):
+                    raise ValueError(
+                        f"Mismatch in 'time' and 'date' values for test files")
                 continue
 
             for window in range(self._config['common']["sliding_windows"]):
@@ -311,12 +342,16 @@ class DataForModelSelector:
                 dataframes = [pd.read_csv(os.path.join(folder_path, file)) for file
                               in loop_files]
 
-                if not all(len(df) == len(dataframes[0]) and df[
-                    ['time', 'date']].equals(dataframes[0][['time', 'date']]) for df
-                           in dataframes):
-                    raise ValueError(
-                        f"Mismatch in 'time' and 'date' values for files in loop item {window}")
 
+                reference_date = dataframes[0]['date']
+                reference_time = dataframes[0]['time']
+
+                for df in dataframes[1:]:
+                    if 'date' not in df or 'time' not in df:
+                        raise ValueError(f'No "date or "time" for {df}')
+                    if not (df['date'].equals(reference_date) and df['time'].equals(reference_time)):
+                        raise ValueError(
+                            f"Mismatch in 'time' and 'date' values for files in loop item {window}")
 
         last_time_in_predict = None
 
@@ -343,7 +378,6 @@ class DataForModelSelector:
         if test_df['time'].iloc[0] != last_time_in_predict + 1:
             raise ValueError(
                 "The first 'time' value in 'spy.csv' should be right after the last 'time' value in the last 'predict_{loop_item}.csv'")
-
 
     def _make_features_removal(self) -> None:
         self._train_time_data = self._data_for_model_train[['time','date']]
@@ -499,12 +533,12 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
         return data
 
     def _make_ratio(self, data: pd.Series, check_missing_indices = True) -> Optional[pd.Series]:
-        ratio_data = data / data.shift(1)
+        ratio_data = (data / data.shift(1)) -1
         ratio_data = self._handle_missing_inf(ratio_data,check_missing_indices = check_missing_indices)
         return ratio_data
 
     def _apply_ratio(self, data: pd.Series) -> pd.Series:
-        ratio_data = data / data.shift(1)
+        ratio_data = (data / data.shift(1))-1
         ratio_data = self._handle_missing_inf_apply(ratio_data)
         return ratio_data
 
@@ -548,14 +582,15 @@ class InputDataEngineering(BaseInputOutputDataEngineering):
             if p_value < 0.05:
                 skewness = stats.skew(transformed_data)
                 kurtosis = stats.kurtosis(transformed_data)
-                if not self._processor._config["common"]["features_engineering"]["check_bell_shape"]:
-                    valid_transformations.append(
-                        (name, p_value, skewness, kurtosis))
+                if self._processor._config["common"]["features_engineering"]["check_bell_shape"]:
+                    if -2 <= skewness <= 7 and -2 <= kurtosis <= 7:
+                        valid_transformations.append(
+                            (name, p_value, skewness, kurtosis))
 
-                elif -2 <= skewness <= 7 and -2 <= kurtosis <= 7:
+                else:
                     valid_transformations.append(
                         (name, p_value, skewness, kurtosis))
-        #self.TEMPO_FCT_MAKE_PLOT(data)
+        self.TEMPO_FCT_MAKE_PLOT(data)
         if not valid_transformations:
             logging.warning(
                 f"Asset {self._asset_name} and column '{self._current_column}' "
@@ -915,9 +950,7 @@ class BaseDataProcessor(ABC):
         self._model_phase = model_phase
         self._is_current_asset_dropped = False
         self._sliding_window = 0
-        self._attributes_to_delete = read_json(
-            "resources/configs/models_support.json"
-        )["attributes_to_discard"]
+        self._attributes_to_delete = self._config['common']["attributes_to_discard"]
         if is_input_feature:
             self._feature_engineering_strategy = InputDataEngineering(
                 self, data_processor_helper
@@ -1222,20 +1255,6 @@ class FutureCovariatesProcessor:
             return self._scaler[feature].transform(data_reshaped)
         else :
             return self._scaler[feature].transform(data_reshaped)
-
-
-class MacroTrends(BaseDataProcessor):
-    def __init__(
-        self, specific_config,config_manager, data_processor_helper, is_input_feature, **kwargs
-    ):
-        super().__init__(
-            specific_config,config_manager, data_processor_helper, is_input_feature, **kwargs
-        )
-    def _run_fetch(self):
-        pass
-
-    def _run_common_fetch(self):
-        pass
 
 class FRED(BaseDataProcessor):
     def __init__(

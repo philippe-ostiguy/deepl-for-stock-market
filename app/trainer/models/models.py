@@ -15,11 +15,12 @@ import json
 import numpy as np
 from sklearn.metrics import mean_squared_error, f1_score
 import threading
-from app.trainer.models.model_customizer import CustomNHiTS,CustomDeepAR,CustomTemporalFusionTransformer,CustomlRecurrentNetwork
-from app.shared.config.config_utils import ConfigManager, ModelValueRetriver
+from app.shared.config.config_utils import ConfigManager
 from app.shared.utils import clear_directory_content, read_json, save_json, read_csv_to_pd_formatted
-from app.trainer.models.common import get_risk_rewards_metrics
 from app.shared.config.constants import DATASETS
+from app.trainer.models.common import get_risk_rewards_metrics
+from app.trainer.config.config_utils import ModelValueRetriver
+from app.trainer.models.model_customizer import CustomNHiTS,CustomDeepAR,CustomTemporalFusionTransformer,CustomlRecurrentNetwork
 import pytz
 import datetime
 import re
@@ -48,6 +49,7 @@ class BaseModelBuilder(ABC):
     ):
         if config_manager is None:
             config_manager = ConfigManager(file='app/trainer/config.yaml')
+
         self._config_manager = config_manager
         self._config = self._config_manager.config
         self._window = None
@@ -169,8 +171,8 @@ class BaseModelBuilder(ABC):
             output = getattr(self, f'_output_{dataset_type}')
 
             if not input_future.empty:
-                input_future = input_future.drop(columns=['time'])
-            output = output.drop(columns=['time'])
+                input_future = input_future.drop(columns=['time','date'])
+            output = output.drop(columns=['time','date'])
 
             data = pd.concat([input_past, input_future, output], axis=1)
             data['group'] = 'group_1'
@@ -179,8 +181,8 @@ class BaseModelBuilder(ABC):
             missing_data = data.isnull().sum()
             empty_data = (data == '').sum()
 
-            missing_locations = {col: data[data[col].isnull()].index.tolist() for col in data.columns if missing_data[col] > 0}
-            empty_locations = {col: data[data[col] == ''].index.tolist() for col in data.columns if empty_data[col] > 0}
+            missing_locations = {col: data[data[col].isnull()].index.tolist() for col in data.columns if (missing_data[col] > 0).any()}
+            empty_locations = {col: data[data[col] == ''].index.tolist() for col in data.columns if (empty_data[col] > 0).any()}
 
             if missing_locations:
                 raise ValueError(f'Missing values in {dataset_type} data: {missing_locations}')
@@ -190,8 +192,8 @@ class BaseModelBuilder(ABC):
 
     def _obtain_dataloader(self):
 
-        self._continuous_cols = [col for col in self._input_past_train.columns if col not in ["time"]]
-        self._targets = [col for col in self._output_train.columns if col not in ["time"]]
+        self._continuous_cols = [col for col in self._input_past_train.columns if col not in ["time","date"]]
+        self._targets = [col for col in self._output_train.columns if col not in ["time","date"]]
         self._continuous_cols.extend(self._targets)
         if len(self._targets) > 1 :
             list_of_normalizers = []
@@ -243,7 +245,6 @@ class BaseModelBuilder(ABC):
             **hyperparameters[self._model_name],
         )
 
-
         callbacks_list = []
         callbacks = self._config_manager.get_callbacks(self._model_name,hyperparameter_phase,self._extra_dirpath)['callbacks']
         for callback in callbacks:
@@ -279,7 +280,7 @@ class BaseModelBuilder(ABC):
         end_time = time.time()
 
         elapsed_time = end_time - start_time
-        print(f"Elapsed time with {self._num_workers} workers: {elapsed_time} seconds")
+        print(f"\nElapsed time with {self._num_workers} workers: {elapsed_time} seconds")
 
     def _coordinate_metrics_calculation(self,
                                         dataloader,
@@ -288,12 +289,24 @@ class BaseModelBuilder(ABC):
         self._raw_predictions = self._best_model.predict(dataloader,
                                                          mode="raw",
                                                          return_x=True,
-                                                         return_y=True)
+                                                       return_y=True)
         self._initialize_metric_variables()
-        for target_item, prediction in enumerate(
-                self._raw_predictions.output.prediction):
-            self._target_item = target_item
-            self._preds_current_stock = prediction
+        predictions = self._raw_predictions.output.prediction
+        if isinstance(predictions,list):
+            self._has_one_target = False
+            for target_item, prediction in enumerate(
+                    self._raw_predictions.output.prediction):
+                self._target_item = target_item
+                self._preds_current_stock = prediction
+                self._gather_metrics(dataloader, data)
+                self._calculate_metrics(data)
+                self._plot_predictions(dataset_type)
+
+        else :
+            self._target_item = 0
+            self._has_one_target = True
+
+            self._preds_current_stock = predictions
             self._gather_metrics(dataloader, data)
             self._calculate_metrics(data)
             self._plot_predictions(dataset_type)
@@ -316,22 +329,23 @@ class BaseModelBuilder(ABC):
         max_drawdown = 0
         peak = self._cumulative_predicted_return
 
+
         for index in range(self._preds_current_stock.shape[0]):
-            current_prediction, indices = self._preds_current_stock[index][0].sort()
-            median_pred_value = current_prediction.median(dim=0).values
-            if current_prediction.shape[0] == 1:
-                lower_value = median_pred_value
-                upper_value = median_pred_value
+            if self._has_one_target:
+                current_prediction = self._preds_current_stock[index][0]
+                actual_return = self._raw_predictions.y[0][index].item()
+            else:
+                current_prediction = self._preds_current_stock[index][0]
+                actual_return = self._raw_predictions.y[0][self._target_item][index].item()
+
+            median_pred_return = torch.tensor(current_prediction[len(current_prediction)//2].item())
+
+            if current_prediction.shape== 1:
+                lower_return = median_pred_return
+                upper_return = median_pred_return
             else :
-                lower_value = current_prediction[self._lower_index]
-                upper_value = current_prediction[self._upper_index]
-
-            actual_value = self._raw_predictions.y[0][self._target_item][index].item()
-
-            median_pred_return = median_pred_value
-            lower_return = lower_value
-            upper_return = upper_value
-            actual_return = actual_value
+                lower_return = current_prediction[self._lower_index]
+                upper_return = current_prediction[self._upper_index]
 
             if lower_return > 0 and upper_return > 0:
                 self._cumulative_predicted_return *= (
@@ -392,7 +406,11 @@ class BaseModelBuilder(ABC):
             rolling_windows = self._params["max_encoder_length"] - 1
         else :
             rolling_windows = 20
-        naive_forecast = forecast_data[self._targets[self._target_item]].rolling(rolling_windows).mean()
+        if self._has_one_target:
+            naive_forecast = forecast_data[self._targets].rolling(rolling_windows).mean()
+        else :
+            naive_forecast = forecast_data[self._targets[self._target_item]].rolling(rolling_windows).mean()
+
         naive_forecast = naive_forecast[len(forecast_data) - len(self._current_all_actuals):].values
 
         self._naive_forecast_rmse.append(np.sqrt(
@@ -486,9 +504,7 @@ class ModelBuilder(BaseModelBuilder):
         self,
         config_manager: ConfigManager,
     ):
-        super().__init__()
-        self._config_manager = config_manager
-        self._config = self._config_manager.config
+        super().__init__(config_manager)
 
 
     def run(self):
@@ -509,10 +525,9 @@ class ModelBuilder(BaseModelBuilder):
 
                 self._obtain_dataloader()
                 self._train_model(self._config_manager.hyperparameters)
+                self._obtain_best_model()
+                self._coordinate_evaluation()
 
-
-            self._obtain_best_model()
-            self._coordinate_evaluation()
             self._save_metrics_from_tensorboardflow()
             self._coordinate_interpretions()
             self._save_run_information()
@@ -760,9 +775,7 @@ class HyperpametersOptimizer(BaseModelBuilder):
             config_manager: ConfigManager
 
     ):
-        super().__init__()
-        self._config_manager = config_manager
-        self._config = config_manager.config
+        super().__init__(config_manager)
         #self._lightning_logs_dir = 'lightning_logs/model_optimization'
         self._params_to_optimized = self._assign_params(hyperparameters_phase='hyperparameters_optimization')
         self._model_suggested_type = {}

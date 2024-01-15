@@ -28,22 +28,31 @@ class PortfolioReturnMetric(Metric):
             if self.daily_returns:
                 raise ValueError("Daily returns should be an empty list or a tensor with value 0")
 
-        targets_size = len(target_tensors[0])
+
+        has_one_target = True
+        if isinstance(target_tensors[0],list) :
+            adapted_target_tensor = target_tensors[0]
+            targets_size = len(adapted_target_tensor)
+            has_one_target = False
+        else:
+            adapted_target_tensor = target_tensors
+            targets_size =1
+
         for item in range(targets_size):
             print(f'current item in update() : {item}')
-            target_tensor = target_tensors[0][item]
-
-            values = preds['prediction'][item].detach().cpu().numpy().squeeze()
+            target_tensor = adapted_target_tensor[item]
+            if has_one_target :
+                values = preds['prediction'].detach().cpu().numpy().squeeze()
+            else :
+                values = preds['prediction'][item].detach().cpu().numpy().squeeze()
             list_preds = values.tolist()
 
             if all(isinstance(lst, list) for lst in list_preds):
-                sorted_preds = [sorted(lst) for lst in list_preds]
-                low_predictions = [lst[self._lower_index] for lst in sorted_preds]
-                high_predictions =[lst[self._upper_index] for lst in sorted_preds]
+                low_predictions = [lst[self._lower_index] for lst in list_preds]
+                high_predictions =[lst[self._upper_index] for lst in list_preds]
             else :
                 low_predictions = list_preds
                 high_predictions = list_preds
-
             target = target_tensor.squeeze().tolist()
 
             daily_returns = []

@@ -6,7 +6,7 @@ from app.trader.position_manager import PositionManager
 
 if __name__ == "__main__":
     os.environ['ORIGINAL_SCRIPT'] = __file__
-    config_manager = ConfigManager(file='app/trader/config.yaml')
+    config_manager = ConfigManager(file='app/trader/config.yaml', clean_data_for_model=True)
     InitProject.create_common_path()
 
     for source, is_input in config_manager.get_sources():

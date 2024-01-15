@@ -28,25 +28,25 @@ from app.shared.data_processor import (
     DataProcessorHelper
 )
 
-
+from app.shared.utils import play_music
 from app.shared.factory import DataSourceFactory
 from app.trainer.models.models import HyperpametersOptimizer, ModelBuilder
-import threading
 import torch
-import os
 
 
 if __name__ == "__main__":
-    config_manager = ConfigManager(file='app/trainer/config.yaml')
+    config_manager = ConfigManager(file='app/trainer/config.yaml', clean_data_for_model=True)
     InitProject.create_common_path()
     InitProject.create_custom_path(file='app/trainer/config.yaml')
 
     data_processor_helper = DataProcessorHelper(config_manager=config_manager)
+    sources = config_manager.get_sources()
     for source, is_input in config_manager.get_sources():
         data_for_source = config_manager.get_config_for_source(source, is_input)
 
         data_source = DataSourceFactory.implement_data_source(
             data_for_source,
+            config_manager,
             data_processor_helper=data_processor_helper,
             is_input_feature=is_input,
         ).run()
@@ -58,14 +58,10 @@ if __name__ == "__main__":
     if config_manager.config['common']['engineering']:
         DataForModelSelector(config_manager).run()
     if config_manager.config['common']['hyperparameters_optimization']['is_optimizing']:
-            HyperpametersOptimizer(config_manager).run()
+        HyperpametersOptimizer(config_manager).run()
 
     ModelBuilder(config_manager).run()
 
     print('Program finished successfully')
     if not torch.cuda.is_available():
-        music_thread = threading.Thread(
-            target=os.system('afplay super-mario-bros.mp3'))
-        music_thread.start()
-
-
+        play_music()

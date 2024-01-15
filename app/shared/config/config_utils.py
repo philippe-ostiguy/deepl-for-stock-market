@@ -1,4 +1,4 @@
-from app.shared.utils import read_json, obtain_market_dates, clear_directory_content
+from app.shared.utils import read_json, clear_directory_content
 from app.shared.config.constants import (
     RAW_PATH,
     PREPROCESSED_PATH,
@@ -42,7 +42,7 @@ logging.getLogger().addHandler(warning_handler)
 
 
 class ConfigManager:
-    def __init__(self, file) -> None:
+    def __init__(self, file, clean_data_for_model : Optional = False) -> None:
         self._config = self._load_config(file)
         original_script = os.environ.get('ORIGINAL_SCRIPT', 'Unknown')
         self._models_with_hyper = read_json(
@@ -56,9 +56,9 @@ class ConfigManager:
         else :
             self.running_app = 'trainer'
         if self.running_app != 'trader':
-            self._validate_num_forecasts()
+
             self._validate_model_metrics()
-            if self._config["common"]['engineering']:
+            if self._config["common"]['engineering'] and clean_data_for_model:
                 clear_directory_content(ENGINEERED_PATH)
                 clear_directory_content(MODEL_DATA_PATH)
         else :
@@ -81,7 +81,7 @@ class ConfigManager:
             self._assign_hyperparameters_to_models()
         self._config["common"]["best_model_path"] = \
             os.path.join(MODELS_PATH, "best_model")
-        if self._config["common"]['preprocessing']:
+        if self._config["common"]['preprocessing'] and clean_data_for_model:
             clear_directory_content(PREPROCESSED_PATH)
 
     def _assign_common_config(self):
@@ -171,37 +171,6 @@ class ConfigManager:
                     f"Metric {metric} is not a supported metric to"
                     f"pick the best model"
                 )
-
-    def _validate_num_forecasts(self):
-        total_days = len(
-            obtain_market_dates(
-                self._config["common"]["start_date"],
-                self._config["common"]["end_date"],
-            )
-        )
-
-        input_length = self._config["hyperparameters"]["common"][
-            "max_encoder_length"
-        ]
-        output_length = self._config["hyperparameters"]["common"][
-            "max_prediction_length"
-        ]
-        train_test_split = self._config["common"]["train_test_split"]
-        validation_forecasts = (
-            total_days * (train_test_split[1])
-            - input_length
-            - output_length
-            + 1
-        )
-        min_forecasts = self._config["common"]["min_validation_forecasts"]
-
-        if validation_forecasts < min_forecasts:
-            raise ValueError(
-                f"Not enough forecasts for validation,"
-                f"minimum is {min_forecasts} but got {validation_forecasts} \n"
-                f"In configuration, decrease input_chunk_length, decrease output_chunk_length,"
-                f"increase the date range and/or decrease train_test_split"
-            )
 
     def get_model_suggest_type(self, model_name: str, model_argument_type: str = 'hyperparameters',
                        keys_only: bool = False) -> dict:

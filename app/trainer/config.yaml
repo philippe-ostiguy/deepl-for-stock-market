@@ -1,9 +1,9 @@
 common :
-  start_date : '2020-07-01'
-  end_date : '2023-11-20'
+  start_date : '2005-07-01'
+  end_date : '2023-12-20'
   max_missing_data : .02
-  fetching : True
-  preprocessing : True
+  fetching : False
+  preprocessing : False
   engineering : False
   sliding_windows : 3
   model_phase : 'train'
@@ -11,10 +11,13 @@ common :
   train_test_split : [.8,.10,.10]
   min_validation_forecasts : 95
   test_performance : .4
+  make_data_stationary: True
+  attributes_to_discard: ["volume","split coefficient","adjusted close", "adj close"]
+
   features_engineering :
     check_bell_shape: False
-    pca_variance : .7
-    is_using_pca : True
+    pca_variance : 1
+    is_using_pca : False
 
   hyperparameters_optimization :
     is_pruning : True
@@ -32,17 +35,17 @@ inputs:
   #    data:
   #      - 'reddit'
   #    size: 100
-    - source: 'av'
+    - source: 'yahoo'
       data:
-        - 'NVDA'
 #        - 'set_dynamically_50_largest_stocks'
 #        - 'NATURAL_GAS'
 #        - '3month'
 #        - '10year'
 #        - '2year'
-#        - 'EUR'
 #        - 'WTI'
 #        - 'MSFT'
+        - "GC=F"
+        - "CC=F"
 #        - 'GOOGL'
 #        - 'AAPL'
 #        - 'AMZN'
@@ -53,28 +56,23 @@ inputs:
 #        - 'T10YIE'
 #        - 'DEXUSNZ'
 #        - 'VIXCLS'
-#    - source : 'macrotrends'
-#      data :
-#         - 'set_dynamically'
-#         - 'wheat'
-#         - 'corn'
   future_covariates :
       data:
         - 'day'
         - 'month'
 
 output :
-  - source : 'av'
+  - source : 'yahoo'
     data :
       - 'SPY'
-#      - 'AAPL'
+      - 'AAPL'
 #      - 'MSFT'
 
 hyperparameters:
   common:
     confidence_level : .7
-    batch_size: 32
-    epochs: 150
+    batch_size: 128
+    epochs: 1
     num_loader_workers : 2
     random_state: 42
     gradient_clip_val : 1
@@ -110,35 +108,14 @@ hyperparameters:
     TemporalFusionTransformer:
       loss: 'QuantileLoss'
       learning_rate: 0.002
-      hidden_size: 256
-      lstm_layers : 2
-      attention_head_size: 2
-      dropout: 0.15
-      hidden_continuous_size: 64
+      hidden_size: 16
+      lstm_layers : 1
+      attention_head_size: 1
+      dropout: 0.1
+      hidden_continuous_size: 8
       #reduce_on_plateau_patience: 5
       outputsize : 7
       weight_decay : 0.02
-#    NHiTS:
-#      hidden_size: 1024
-#      loss: 'QuantileLoss'
-#      downsample_frequencies : [1,1,1]
-#      pooling_sizes : [4,2,1]
-#      n_blocks : [2,2,2]
-#      learning_rate : 0.001
-#      backcast_loss_ratio : 0.0
-#      weight_decay : 0.01
-#    RecurrentNetwork :
-#      cell_type: 'LSTM'
-#      hidden_size: 32
-#      rnn_layers: 3
-#      dropout: 0.1
-#      loss: 'RMSE'
-#    DeepAR:
-#      cell_type : 'LSTM'
-#      hidden_size: 32
-#      rnn_layers: 3
-#      dropout : .1
-#      loss : 'NormalDistributionLoss'
 
 
 hyperparameters_optimization:
