@@ -77,15 +77,8 @@ hyperparameters:
     random_state: 42
     gradient_clip_val : 1
     optimizer : "Ranger"
-#    optimizer_kwargs: {"lr": 0.001}
-#    lr_scheduler_cls: ""
-#    lr_scheduler_kwargs:
-#      max_lr: null
-#      total_steps: null
-#      pct_start: 0.1
-#      anneal_strategy: "linear"
-#      cycle_momentum: False
-    likelihood: [0.05, 0.1, 0.3, 0.5, 0.7, 0.9, 0.95]
+
+    likelihood: [0.01, 0.1, 0.3, 0.5, 0.7, 0.9, 0.99]
     max_encoder_length: 64
     max_prediction_length: 1
     callbacks :

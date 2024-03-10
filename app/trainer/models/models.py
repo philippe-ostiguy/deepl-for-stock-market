@@ -55,7 +55,7 @@ class BaseModelBuilder(ABC):
         self._window = None
         self._params = {}
         self._datasets = DATASETS
-        self._model_dir = ''
+        self._window_model_dir = ''
         self._lightning_logs_dir = ''
         self._logger = None
         self._model_name = ''
@@ -114,8 +114,8 @@ class BaseModelBuilder(ABC):
         self._lower_index, self._upper_index)
 
     def _clean_directory(self, exclusions : Optional[list] = None):
-        clear_directory_content(self._model_dir, exclusions)
-        os.makedirs(self._model_dir, exist_ok=True)
+        clear_directory_content(self._window_model_dir, exclusions)
+        os.makedirs(self._window_model_dir, exist_ok=True)
         self._cleanup_logs(self._lightning_logs_dir)
         self._cleanup_logs(f'{self._lightning_logs_dir}/{self._model_name}')
 
@@ -163,7 +163,7 @@ class BaseModelBuilder(ABC):
             self._accelerator = 'auto'
             self._num_workers = 0
 
-    def _assign_data_models(self):
+    def _assign_data_to_models(self):
         for dataset_type in self._datasets:
             input_past = getattr(self, f'_input_past_{dataset_type}')
             input_future = getattr(self, f'_input_future_{dataset_type}',
@@ -195,19 +195,13 @@ class BaseModelBuilder(ABC):
         self._continuous_cols = [col for col in self._input_past_train.columns if col not in ["time","date"]]
         self._targets = [col for col in self._output_train.columns if col not in ["time","date"]]
         self._continuous_cols.extend(self._targets)
-        if len(self._targets) > 1 :
-            list_of_normalizers = []
-            for target in self._targets:
-                list_of_normalizers.append(GroupNormalizer(
-                groups=["group"]
-            ))
-            target_normalizer = MultiNormalizer(list_of_normalizers)
-        else :
-            self._targets = self._targets[0]
-            target_normalizer = GroupNormalizer(
-                groups=["group"]
-            )
 
+        list_of_normalizers = []
+        for target in self._targets:
+            list_of_normalizers.append(GroupNormalizer(
+            groups=["group"]
+        ))
+        target_normalizer = MultiNormalizer(list_of_normalizers)
 
         self._add_encoder_length = True
         self._add_relative_time_idx = True
@@ -251,6 +245,7 @@ class BaseModelBuilder(ABC):
             if isinstance(callback,
                           ModelCheckpoint):
                 self._model_checkpoint = callback
+
                 callbacks_list.append(self._model_checkpoint)
             if isinstance(callback,
                           EarlyStopping):
@@ -291,25 +286,15 @@ class BaseModelBuilder(ABC):
                                                          return_x=True,
                                                        return_y=True)
         self._initialize_metric_variables()
-        predictions = self._raw_predictions.output.prediction
-        if isinstance(predictions,list):
-            self._has_one_target = False
-            for target_item, prediction in enumerate(
-                    self._raw_predictions.output.prediction):
-                self._target_item = target_item
-                self._preds_current_stock = prediction
-                self._gather_metrics(dataloader, data)
-                self._calculate_metrics(data)
-                self._plot_predictions(dataset_type)
-
-        else :
-            self._target_item = 0
-            self._has_one_target = True
-
-            self._preds_current_stock = predictions
+        for target_item, prediction in enumerate(
+                self._raw_predictions.output.prediction):
+            self._target_item = target_item
+            self._preds_current_stock = prediction
             self._gather_metrics(dataloader, data)
             self._calculate_metrics(data)
             self._plot_predictions(dataset_type)
+
+
 
         self._calculate_aggregate_metrics(dataset_type)
         self._save_metrics(dataset_type)
@@ -331,12 +316,9 @@ class BaseModelBuilder(ABC):
 
 
         for index in range(self._preds_current_stock.shape[0]):
-            if self._has_one_target:
-                current_prediction = self._preds_current_stock[index][0]
-                actual_return = self._raw_predictions.y[0][index].item()
-            else:
-                current_prediction = self._preds_current_stock[index][0]
-                actual_return = self._raw_predictions.y[0][self._target_item][index].item()
+
+            current_prediction = self._preds_current_stock[index][0]
+            actual_return = self._raw_predictions.y[0][self._target_item][index].item()
 
             median_pred_return = torch.tensor(current_prediction[len(current_prediction)//2].item())
 
@@ -406,10 +388,8 @@ class BaseModelBuilder(ABC):
             rolling_windows = self._params["max_encoder_length"] - 1
         else :
             rolling_windows = 20
-        if self._has_one_target:
-            naive_forecast = forecast_data[self._targets].rolling(rolling_windows).mean()
-        else :
-            naive_forecast = forecast_data[self._targets[self._target_item]].rolling(rolling_windows).mean()
+
+        naive_forecast = forecast_data[self._targets[self._target_item]].rolling(rolling_windows).mean()
 
         naive_forecast = naive_forecast[len(forecast_data) - len(self._current_all_actuals):].values
 
@@ -442,8 +422,8 @@ class BaseModelBuilder(ABC):
         return weighted_av_metrics
 
     def _calculate_aggregate_metrics(self, dataset_type):
-        if not hasattr(self, '_metrics'):
-            self._metrics = {}
+        if not hasattr(self, '_window_metrics'):
+            self._window_metrics = {}
 
         weighted_av_metrics = self._obtain_aggregate_metrics(
             [self._rmse, self._f1_score_value,
@@ -454,8 +434,10 @@ class BaseModelBuilder(ABC):
         actual_return_risk = sum(self._actual_return_on_risk)/len(self._nb_trades)
         actual_return = sum(self._all_actual_returns)/len(self._nb_trades)
         individual_returns = [tens.item() for tens in self._returns_on_trade_all]
-
-        self._metrics[dataset_type] = {
+        window = str(self._window)
+        if not dataset_type in self._window_metrics:
+            self._window_metrics[dataset_type] = {}
+        self._window_metrics[dataset_type][window] = {
             "rmse": weighted_av_metrics[0],
             "f1_score": weighted_av_metrics[1],
             "naive_forecast_rmse": naive_rmse,
@@ -469,15 +451,17 @@ class BaseModelBuilder(ABC):
             "individual_annualized_return" : individual_returns
         }
 
+
+
     def _save_metrics(self, dataset_type):
         metrics_path = os.path.join(
-            f'{self._model_dir}', 'metrics.json')
+            f'{self._window_model_dir}', 'metrics.json')
         if os.path.exists(metrics_path):
             with open(metrics_path, 'r', encoding='utf-8') as f:
                 existing_metrics = json.load(f)
-            existing_metrics[dataset_type] = self._metrics[dataset_type]
+            existing_metrics[dataset_type] = self._window_metrics[dataset_type][str(self._window)]
         else:
-            existing_metrics = {dataset_type: self._metrics[dataset_type]}
+            existing_metrics = {dataset_type: self._window_metrics[dataset_type][str(self._window)]}
 
         with open(metrics_path, 'w', encoding='utf-8') as f:
             json.dump(existing_metrics, f, ensure_ascii=False, indent=4)
@@ -494,7 +478,7 @@ class BaseModelBuilder(ABC):
         plt.title(f'Actual vs Predicted Values over time - {dataset_type}')
         plt.legend()
         asset = self._targets[self._target_item].replace("_target",'')
-        plt.savefig(os.path.join(f'{self._model_dir}',
+        plt.savefig(os.path.join(f'{self._window_model_dir}',
                                  f'{asset}_forecast_{dataset_type}.png'))
         plt.close()
 
@@ -510,15 +494,16 @@ class ModelBuilder(BaseModelBuilder):
     def run(self):
 
         for model in self._config["hyperparameters"]["models"]:
+
             for window in range(self._config['common']['sliding_windows']):
                 self._window= window
                 self._initialize_variables()
-                self._obtain_data()
                 self._model_name = model
-                self._assign_data_models()
-                self._model_dir = f'models/{self._model_name}'
+                self._window_model_dir = f'models/{self._model_name}/window_{window}/'
                 self._clean_directory()
                 self._model_to_train =  CUSTOM_MODEL[self._model_name]
+                self._obtain_data()
+                self._assign_data_to_models()
                 if self._config['common']['hyperparameters_optimization'][
                     'is_optimizing']:
                     self._assign_best_hyperparams()
@@ -526,12 +511,41 @@ class ModelBuilder(BaseModelBuilder):
                 self._obtain_dataloader()
                 self._train_model(self._config_manager.hyperparameters)
                 self._obtain_best_model()
-                self._coordinate_evaluation()
+                self._coordinate_evaluation(dataset_to_evaluate=['predict'])
+                self._save_metrics_from_tensorboardflow()
+                self._coordinate_interpretions()
+                self._save_run_information()
 
-            self._save_metrics_from_tensorboardflow()
-            self._coordinate_interpretions()
-            self._save_run_information()
+            self._model_dir =f'models/{self._model_name}'
+            self._obtain_average_for_metrics() #VOIR LA SI LA FONCTION FONCTIONNE CORRECTEMENT
+            # ET sauvegarder les nouvelles métriques ensembles
             self._coordinate_select_best_model()
+
+
+    def _obtain_average_for_metrics(self):
+        self._model_metrics = {}
+        for dataset_type, windows in self._window_metrics.items():
+            metrics_sum = {}
+            num_windows = len(windows)
+
+            for window_metrics in windows.values():
+                for metric, value in window_metrics.items():
+                    if isinstance(value, list):
+                        if metric not in metrics_sum:
+                            metrics_sum[metric] = [0] * len(value)
+                        metrics_sum[metric] = [sum_val + new_val for sum_val, new_val in zip(metrics_sum[metric], value)]
+                    else:
+                        metrics_sum[metric] = metrics_sum.get(metric, 0) + value
+
+            self._model_metrics[dataset_type] = {}
+            for metric, total in metrics_sum.items():
+                if isinstance(total, list):
+                    self._model_metrics[dataset_type][metric] = [sum_val / num_windows for sum_val in total]
+                else:
+                    self._model_metrics[dataset_type][metric] = total / num_windows
+
+            T =5
+
 
     def _initialize_variables(self):
         self._params = self._assign_params()
@@ -540,7 +554,7 @@ class ModelBuilder(BaseModelBuilder):
         self._lower_index, self._upper_index = self._values_retriever.confidence_indexes
 
     def _assign_best_hyperparams(self):
-        optimized_model_path = self._model_dir.replace('models/','models/hyperparameters_optimization/')
+        optimized_model_path = self._window_model_dir.replace('models/','models/hyperparameters_optimization/')
         with open(f"{optimized_model_path}/best_study.pkl",
                 'rb') as file:
             best_hyper_params = pickle.load(file)
@@ -579,7 +593,7 @@ class ModelBuilder(BaseModelBuilder):
             reduction="sum"
         )
 
-        features_importance_dir = f'{self._model_dir }/features_importance'
+        features_importance_dir = f'{self._window_model_dir }/features_importance'
         os.makedirs(features_importance_dir, exist_ok=True)
         self._save_multiple_interprations_plot(interpretations,
                                                features_importance_dir,
@@ -710,21 +724,27 @@ class ModelBuilder(BaseModelBuilder):
             "metrics_to_choose_model"
         ]
         return {
-            metric: self._metrics[self._dataset_type][metric] for metric in metrics_to_choose_model
+            metric: self._model_metrics[self._dataset_type][metric] for metric in metrics_to_choose_model
         }
 
-    def _coordinate_evaluation(self):
+    def _coordinate_evaluation(self, dataset_to_evaluate : list ):
+        data_to_evaluate = []
+        if 'predict' in dataset_to_evaluate:
+            data_to_evaluate.append((self._predict_dataloader, self._predict_data, 'predict'))
+        if 'test' in dataset_to_evaluate:
+            data_to_evaluate.append((self._test_dataloader, self._test_data, 'test'))
 
-        for dataloader, data, dataset_type in [(self._predict_dataloader, self._predict_data, 'predict'), (self._test_dataloader, self._test_data, 'test')]:
+        for dataloader, data, dataset_type in data_to_evaluate:
             if dataloader is None or data is None:
                 continue
 
             self._coordinate_metrics_calculation(dataloader,data,dataset_type)
 
+
     def _save_metrics_from_tensorboardflow(self):
         metrics_dict = {}
 
-        os.makedirs(f'{self._model_dir}/tensorboard', exist_ok=True)
+        os.makedirs(f'{self._window_model_dir}/tensorboard', exist_ok=True)
         for event_file in os.listdir(self._logger.log_dir):
             if not event_file.startswith('events.out.tfevents'):
                 continue
@@ -749,7 +769,7 @@ class ModelBuilder(BaseModelBuilder):
             plt.ylabel('Value')
             plt.title(metric)
             plt.legend(loc='upper right')
-            plt.savefig(f"{self._model_dir}/tensorboard/{metric.replace('/', '_')}.png")
+            plt.savefig(f"{self._window_model_dir}/tensorboard/{metric.replace('/', '_')}.png")
             plt.close()
 
 
@@ -762,7 +782,7 @@ class ModelBuilder(BaseModelBuilder):
         data['last_epoch_trained'] = self._trainer.current_epoch + 1
         save_json(
             os.path.join(
-                self._model_dir,
+                self._window_model_dir,
                 "run_information.json"
             ),
             data,
@@ -791,11 +811,11 @@ class HyperpametersOptimizer(BaseModelBuilder):
                 self._config_manager.get_model_suggest_type(model)
             self._model_name = model
             optuna_storage = model + '_last_study.db'
-            self._model_dir = f'models/hyperparameters_optimization/{self._model_name}'
+            self._window_model_dir = f'models/hyperparameters_optimization/{self._model_name}'
             self._clean_directory(exclusions=[optuna_storage,'best_study.pkl'])
             if not self._config['common']['hyperparameters_optimization']['is_using_prev_study']:
-                if os.path.exists(os.path.join(self._model_dir, optuna_storage)):
-                        os.remove(os.path.join(self._model_dir, optuna_storage))
+                if os.path.exists(os.path.join(self._window_model_dir, optuna_storage)):
+                        os.remove(os.path.join(self._window_model_dir, optuna_storage))
 
             if self._config['common']['hyperparameters_optimization'][
                 'is_pruning']:
@@ -807,7 +827,7 @@ class HyperpametersOptimizer(BaseModelBuilder):
             else:
                 pruner = None
             sampler = optuna.samplers.TPESampler(seed=42)
-            storage_name = f"sqlite:///{os.path.join(self._model_dir, optuna_storage)}"
+            storage_name = f"sqlite:///{os.path.join(self._window_model_dir, optuna_storage)}"
 
             try :
                 study = optuna.load_study(pruner = pruner,
@@ -829,7 +849,7 @@ class HyperpametersOptimizer(BaseModelBuilder):
             if n_trials > 0 :
                 study.optimize(self._objective, n_trials=n_trials,show_progress_bar=True)
 
-                with open(f"{self._model_dir}/best_study.pkl", "wb") as fout:
+                with open(f"{self._window_model_dir}/best_study.pkl", "wb") as fout:
                     pickle.dump(study, fout)
                 print(study.best_params)
 
@@ -839,7 +859,7 @@ class HyperpametersOptimizer(BaseModelBuilder):
     def _objective(self, trial: optuna.Trial):
         self._extra_dirpath = 'trial_v' + str(trial.number)
         self._obtain_data()
-        self._assign_data_models()
+        self._assign_data_to_models()
         self._initialize_training_variables()
         self._hyper_possible_values = self._config_manager.hyperparameters_to_optimize[self._model_name]
         self._current_suggested_type = self._model_suggested_type
@@ -863,7 +883,7 @@ class HyperpametersOptimizer(BaseModelBuilder):
                 f'Model only trained for {self._model.current_epoch} epoch. Training terminated prematurely.')
 
         checkpoint = torch.load(
-            f"{self._model_dir}/{self._extra_dirpath}/best_model.ckpt")
+            f"{self._window_model_dir}/{self._extra_dirpath}/best_model.ckpt")
 
         model_checkpoint_key = next(
             key for key in checkpoint["callbacks"] if "ModelCheckpoint" in key)
@@ -872,8 +892,8 @@ class HyperpametersOptimizer(BaseModelBuilder):
             'best_model_score'].item()
 
         logging.warning(f'current best return on risk for trial {trial.number} : {best_value}')
-        if os.path.exists(f"{self._model_dir}/{self._extra_dirpath}"):
-            shutil.rmtree(f"{self._model_dir}/{self._extra_dirpath}")
+        if os.path.exists(f"{self._window_model_dir}/{self._extra_dirpath}"):
+            shutil.rmtree(f"{self._window_model_dir}/{self._extra_dirpath}")
 
         return best_value
 
