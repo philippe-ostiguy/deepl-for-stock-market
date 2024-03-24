@@ -6,7 +6,7 @@ import time
 from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
 from tensorboard.backend.event_processing import event_accumulator
 from pytorch_forecasting import TimeSeriesDataSet, BaseModelWithCovariates
-from pytorch_forecasting.data import GroupNormalizer, MultiNormalizer
+from pytorch_forecasting.data import GroupNormalizer, MultiNormalizer, MultiLoss
 from typing import Callable, Union, Optional
 import matplotlib.pyplot as plt
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
@@ -21,6 +21,7 @@ from app.shared.config.constants import DATASETS
 from app.trainer.models.common import get_risk_rewards_metrics
 from app.trainer.config.config_utils import ModelValueRetriver
 from app.trainer.models.model_customizer import CustomNHiTS,CustomDeepAR,CustomTemporalFusionTransformer,CustomlRecurrentNetwork
+from app.shared.utils import play_music
 import pytz
 import datetime
 import re
@@ -32,6 +33,7 @@ import pickle
 from abc import ABC
 import logging
 import torch
+
 
 CUSTOM_MODEL = {
     "NHiTS": CustomNHiTS,
@@ -65,6 +67,7 @@ class BaseModelBuilder(ABC):
         self._best_model : Optional[BaseModelWithCovariates] = ''
         self._extra_dirpath = ''
         self._model_to_train = ''
+
 
 
     def _assign_params(self, hyperparameters_phase : Optional[str] = 'hyperparameters'):
@@ -231,16 +234,21 @@ class BaseModelBuilder(ABC):
         self._test_dataset = TimeSeriesDataSet.from_dataset(self._training_dataset, self._test_data, predict=False, stop_randomization=True)
         self._test_dataloader = self._test_dataset.to_dataloader(train=False, batch_size=self._params['batch_size']*5000,num_workers = self._num_workers)
 
-    def _train_model(self, hyperparameters : dict, hyperparameter_phase: Optional[str] = 'hyperparameters'):
+    def _train_model(self, hyperparameters : dict, hyperparameter_phase: Optional[str] = 'hyperparameters', has_sliding_windows : bool = False):
         pl.seed_everything(self._params['random_state'])
-
+        if len(self._targets) == 1:
+            hyperparameters[self._model_name] = MultiLoss(hyperparameters[self._model_name])
         self._model = self._model_to_train.from_dataset(
             dataset=self._training_dataset,
             **hyperparameters[self._model_name],
         )
 
         callbacks_list = []
-        callbacks = self._config_manager.get_callbacks(self._model_name,hyperparameter_phase,self._extra_dirpath)['callbacks']
+        if has_sliding_windows:
+            current_window = self._window
+        else:
+            current_window = None
+        callbacks = self._config_manager.get_callbacks(self._model_name,hyperparameter_phase,self._extra_dirpath, current_window = current_window)['callbacks']
         for callback in callbacks:
             if isinstance(callback,
                           ModelCheckpoint):
@@ -257,7 +265,6 @@ class BaseModelBuilder(ABC):
         if self._lightning_logs_dir:
             self._logger = TensorBoardLogger(self._lightning_logs_dir,
                                              name=self._model_name)
-
 
         self._trainer = pl.Trainer(
             max_epochs=self._params["epochs"],
@@ -293,8 +300,6 @@ class BaseModelBuilder(ABC):
             self._gather_metrics(dataloader, data)
             self._calculate_metrics(data)
             self._plot_predictions(dataset_type)
-
-
 
         self._calculate_aggregate_metrics(dataset_type)
         self._save_metrics(dataset_type)
@@ -466,6 +471,13 @@ class BaseModelBuilder(ABC):
         with open(metrics_path, 'w', encoding='utf-8') as f:
             json.dump(existing_metrics, f, ensure_ascii=False, indent=4)
 
+
+    def _save_metrics_aggregate(self):
+        metrics_path = os.path.join(
+            f'{self._model_dir}', 'metrics.json')
+        with open(metrics_path, 'w', encoding='utf-8') as f:
+            json.dump(self._aggregate_metrics, f, ensure_ascii=False, indent=4)
+
     def _plot_predictions(self, dataset_type):
 
         plt.figure(figsize=(10, 6))
@@ -489,6 +501,7 @@ class ModelBuilder(BaseModelBuilder):
         config_manager: ConfigManager,
     ):
         super().__init__(config_manager)
+        self._best_metrics = {}
 
 
     def run(self):
@@ -499,7 +512,13 @@ class ModelBuilder(BaseModelBuilder):
                 self._window= window
                 self._initialize_variables()
                 self._model_name = model
-                self._window_model_dir = f'models/{self._model_name}/window_{window}/'
+                if self._config['common']['sliding_windows'] != 1:
+                    self._window_model_dir = f'models/{self._model_name}/window_{window}/'
+                    has_sliding_windows = True
+                else :
+                    self._window_model_dir =f'models/{self._model_name}/'
+                    self._model_dir =f'models/{self._model_name}'
+                    has_sliding_windows = False
                 self._clean_directory()
                 self._model_to_train =  CUSTOM_MODEL[self._model_name]
                 self._obtain_data()
@@ -507,45 +526,72 @@ class ModelBuilder(BaseModelBuilder):
                 if self._config['common']['hyperparameters_optimization'][
                     'is_optimizing']:
                     self._assign_best_hyperparams()
-
                 self._obtain_dataloader()
-                self._train_model(self._config_manager.hyperparameters)
+                self._train_model(self._config_manager.hyperparameters,has_sliding_windows = has_sliding_windows)
                 self._obtain_best_model()
-                self._coordinate_evaluation(dataset_to_evaluate=['predict'])
+                if self._config['common']['sliding_windows'] != 1:
+                    self._coordinate_evaluation(dataset_to_evaluate=['predict'])
+                    self._dataset_type = 'predict'
+                    self._current_metrics =  {}
+                    self._current_metrics[self._dataset_type]= self._filter_relevant_metrics()
+                    is_metric_value_positive, metric = self._is_model_better_predict(best_value=0,compare_actual_best_model=False)
+                    if not is_metric_value_positive:
+                        print(f'Program stopped. Negative value {self._current_metrics[self._dataset_type][metric]} for {metric} and window {window}')
+                        play_music()
+                        exit()
+                else:
+                    self._coordinate_evaluation(dataset_to_evaluate=['predict', 'test'])
+                    self._coordinate_select_best_model()
                 self._save_metrics_from_tensorboardflow()
                 self._coordinate_interpretions()
                 self._save_run_information()
 
-            self._model_dir =f'models/{self._model_name}'
-            self._obtain_average_for_metrics() #VOIR LA SI LA FONCTION FONCTIONNE CORRECTEMENT
-            # ET sauvegarder les nouvelles métriques ensembles
-            self._coordinate_select_best_model()
-
+            if self._config['common']['sliding_windows'] != 1:
+                self._model_dir =f'models/{self._model_name}'
+                self._obtain_average_for_metrics()
+                self._save_metrics_aggregate()
 
     def _obtain_average_for_metrics(self):
-        self._model_metrics = {}
-        for dataset_type, windows in self._window_metrics.items():
-            metrics_sum = {}
-            num_windows = len(windows)
+        self._aggregate_metrics = {}
+        aggregate_metrics_tempo = {
+            'rmse': 0,
+            'f1_score': 0,
+            'annualized_return': 0,
+            'ann_return_on_risk': 0,
+            'max_drawdown': 0,
+            'naive_forecast_rmse' : 0,
+            'rmse_vs_naive': 0
 
-            for window_metrics in windows.values():
-                for metric, value in window_metrics.items():
-                    if isinstance(value, list):
-                        if metric not in metrics_sum:
-                            metrics_sum[metric] = [0] * len(value)
-                        metrics_sum[metric] = [sum_val + new_val for sum_val, new_val in zip(metrics_sum[metric], value)]
-                    else:
-                        metrics_sum[metric] = metrics_sum.get(metric, 0) + value
+        }
+        total_weight = 0
+        total_sum_trade_individual = []
+        total_weights_trade_individual  = []
+        initialized = False
+        for period in self._window_metrics['predict'].values():
+            weight = sum(period['nb_of_trades'])
+            total_weight += weight
+            aggregate_metrics_tempo['rmse'] += period['rmse'] * weight
+            aggregate_metrics_tempo['f1_score'] += period['f1_score'] * weight
+            aggregate_metrics_tempo['annualized_return'] += period['annualized_return'] * weight
+            aggregate_metrics_tempo['ann_return_on_risk'] += period['ann_return_on_risk'] * weight
+            aggregate_metrics_tempo['naive_forecast_rmse'] += period['naive_forecast_rmse'] * weight
+            aggregate_metrics_tempo['rmse_vs_naive'] += period['rmse_vs_naive'] * weight
+            aggregate_metrics_tempo['max_drawdown'] += sum(period['max_drawdown']) / len(period['max_drawdown']) * weight
+            if not initialized:
+                total_sum_trade_individual  = [0] * len(period['individual_annualized_return'])
+                total_weights_trade_individual  = [0] * len(period['nb_of_trades'])
+                initialized = True
 
-            self._model_metrics[dataset_type] = {}
-            for metric, total in metrics_sum.items():
-                if isinstance(total, list):
-                    self._model_metrics[dataset_type][metric] = [sum_val / num_windows for sum_val in total]
-                else:
-                    self._model_metrics[dataset_type][metric] = total / num_windows
+            for i, (return_value, trade_count) in enumerate(zip(period['individual_annualized_return'], period['nb_of_trades'])):
+                total_sum_trade_individual[i] += return_value * trade_count
+                total_weights_trade_individual[i] += trade_count
 
-            T =5
 
+        self._aggregate_metrics = {measure: total / total_weight for measure, total in aggregate_metrics_tempo.items()}
+        self._aggregate_metrics['actual_annualized_return'] = sum(item['actual_annualized_return'] for item in self._window_metrics['predict'].values()) / len(self._window_metrics['predict'])
+        self._aggregate_metrics['individual_annualized_return'] = [sum_val / weight for sum_val, weight in zip(total_sum_trade_individual, total_weights_trade_individual)]
+        self._aggregate_metrics['ann_actual_return_on_risk'] = sum(item['ann_actual_return_on_risk'] for item in self._window_metrics['predict'].values()) / len(self._window_metrics['predict'])
+        self._aggregate_metrics['nb_of_trades'] = [sum(trades) / len(trades) for trades in (zip(*(item['nb_of_trades'] for item in self._window_metrics['predict'].values())))]
 
     def _initialize_variables(self):
         self._params = self._assign_params()
@@ -638,8 +684,7 @@ class ModelBuilder(BaseModelBuilder):
             self._best_metrics[self._dataset_type]= read_json(best_model_metrics_file)[self._dataset_type]
             self._current_metrics[self._dataset_type] = self._filter_relevant_metrics()
             if self._is_new_model_better:
-                is_model_better_func = getattr(self, f"_is_model_better_{self._dataset_type}")
-                self._is_new_model_better = is_model_better_func()
+                self._is_new_model_better,_ = self._is_model_better_predict()
         else:
             self._save_best_model()
 
@@ -692,23 +737,20 @@ class ModelBuilder(BaseModelBuilder):
 
         subprocess.run(['git', 'add',best_root_dir])
 
+    def _get_func_compare_performance(self, metric : str) -> Callable:
+        return getattr(self, f"_is_{metric}_performance_better")
 
     def _is_model_better_predict(
-        self) -> bool:
+        self, best_value : float = 0, compare_actual_best_model : bool = True) -> (bool,str):
         for metric in self._current_metrics[self._dataset_type]:
-            better_func = getattr(self, f"_is_{metric}_performance_better")
-            if metric not in self._best_metrics[self._dataset_type]:
-                return True
-            if not better_func(self._current_metrics[self._dataset_type][metric], self._best_metrics[self._dataset_type][metric]):
-                return False
-        return True
-
-    def _is_model_better_test(self) -> bool:
-        if 'return_on_risk' in self._current_metrics[self._dataset_type]:
-            if self._current_metrics['test']['return_on_risk'] \
-                    < (self._config['common']['test_performance'] * self._current_metrics['predict']['return_on_risk']):
-                return False
-        return True
+            better_func = self._get_func_compare_performance(metric)
+            if compare_actual_best_model and metric not in self._best_metrics[self._dataset_type]:
+                return True,''
+            if compare_actual_best_model:
+                best_value = self._best_metrics[self._dataset_type][metric]
+            if not better_func(self._current_metrics[self._dataset_type][metric],best_value):
+                return False,metric
+        return True,''
 
     def _is_annualized_return_performance_better(
         self, current: float, best: float
@@ -718,13 +760,12 @@ class ModelBuilder(BaseModelBuilder):
     def _is_ann_return_on_risk_performance_better(self, current: float, best: float) -> bool:
         return current > best
 
-
     def _filter_relevant_metrics(self) :
         metrics_to_choose_model = self._config["common"][
             "metrics_to_choose_model"
         ]
         return {
-            metric: self._model_metrics[self._dataset_type][metric] for metric in metrics_to_choose_model
+            metric: self._window_metrics[self._dataset_type][str(self._window)][metric] for metric in metrics_to_choose_model
         }
 
     def _coordinate_evaluation(self, dataset_to_evaluate : list ):

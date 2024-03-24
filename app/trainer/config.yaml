@@ -3,14 +3,13 @@ common :
   end_date : '2023-12-20'
   max_missing_data : .02
   fetching : False
-  preprocessing : False
-  engineering : False
+  preprocessing : True
+  engineering : True
   sliding_windows : 3
   model_phase : 'train'
   min_nb_trades : 20
   train_test_split : [.8,.10,.10]
   min_validation_forecasts : 95
-  test_performance : .4
   make_data_stationary: True
   attributes_to_discard: ["volume","split coefficient","adjusted close", "adj close"]
 
@@ -66,7 +65,6 @@ output :
     data :
       - 'SPY'
       - 'AAPL'
-#      - 'MSFT'
 
 hyperparameters:
   common:

@@ -47,7 +47,6 @@ load_dotenv()
 from app.shared.config.config_utils import ConfigManager
 
 from app.shared.utils import (
-    read_json,
     obtain_market_dates,
     read_csv_to_pd_formatted,
     write_to_csv_formatted,

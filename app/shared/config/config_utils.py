@@ -124,7 +124,8 @@ class ConfigManager:
     def get_callbacks(self,
                       model,
                       hyperparameters_phase : Optional[str] = "hyperparameters",
-                      extra_dirpath : Optional[str] = ''):
+                      extra_dirpath : Optional[str] = '',
+                      current_window: Optional[int] = None):
         pl_trainer_kwargs = deepcopy(self._config[hyperparameters_phase]["common"]["pl_trainer_kwargs"])
         callback_config = deepcopy(self._config[hyperparameters_phase]["common"]["callbacks"])
         if not pl_trainer_kwargs:
@@ -153,7 +154,10 @@ class ConfigManager:
                                     'monitor') == 'val_PortfolioReturnMetric':
                                 callback_args['mode'] = 'max'
                                 if hyperparameters_phase == "hyperparameters" :
-                                    callback_args['dirpath'] = f'{MODELS_PATH}/{model}'
+                                    if current_window is not None:
+                                        callback_args['dirpath'] = f'{MODELS_PATH}/{model}/window_{current_window}'
+                                    else :
+                                        callback_args['dirpath'] = f'{MODELS_PATH}/{model}'
                                 else :
                                     callback_args['dirpath'] = f'{MODELS_PATH}/hyperparameters_optimization/{model}'
                                 if extra_dirpath:
