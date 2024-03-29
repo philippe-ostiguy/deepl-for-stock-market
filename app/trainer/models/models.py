@@ -5,8 +5,8 @@ import lightning.pytorch as pl
 import time
 from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
 from tensorboard.backend.event_processing import event_accumulator
-from pytorch_forecasting import TimeSeriesDataSet, BaseModelWithCovariates
-from pytorch_forecasting.data import GroupNormalizer, MultiNormalizer, MultiLoss
+from pytorch_forecasting import TimeSeriesDataSet, BaseModelWithCovariates, MultiLoss
+from pytorch_forecasting.data import GroupNormalizer, MultiNormalizer
 from typing import Callable, Union, Optional
 import matplotlib.pyplot as plt
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
@@ -236,13 +236,10 @@ class BaseModelBuilder(ABC):
 
     def _train_model(self, hyperparameters : dict, hyperparameter_phase: Optional[str] = 'hyperparameters', has_sliding_windows : bool = False):
         pl.seed_everything(self._params['random_state'])
-        if len(self._targets) == 1:
-            hyperparameters[self._model_name] = MultiLoss(hyperparameters[self._model_name])
         self._model = self._model_to_train.from_dataset(
             dataset=self._training_dataset,
             **hyperparameters[self._model_name],
         )
-
         callbacks_list = []
         if has_sliding_windows:
             current_window = self._window
@@ -298,7 +295,7 @@ class BaseModelBuilder(ABC):
             self._target_item = target_item
             self._preds_current_stock = prediction
             self._gather_metrics(dataloader, data)
-            self._calculate_metrics(data)
+            self._calculate_metrics(data, dataset_type)
             self._plot_predictions(dataset_type)
 
         self._calculate_aggregate_metrics(dataset_type)
@@ -371,14 +368,16 @@ class BaseModelBuilder(ABC):
         self._f1_score_value = []
         self._rmse = []
         self._nb_trades =[]
-        self._all_actual_returns = []
+        self._actual_annualized_returns = []
+        self._actual_annualized_returns_old = []
         self._max_drawdown_all = []
         self._return_on_risk = []
         self._returns_on_trade_all = []
 
 
     def _calculate_metrics(self,
-                         forecast_data):
+                            forecast_data,
+                            dataset_type):
 
         predicted_return_class = [1 if ret >= 0 else 0 for ret in
                                   self._preds_class]
@@ -405,12 +404,24 @@ class BaseModelBuilder(ABC):
         self._returns_on_trade_all.append(risk_reward_metrics['annualized_return'])
         self._nb_trades.append(len(self._returns_on_trade_list))
 
-        actual_annualized_return = \
+        actual_annualized_return_old = \
             (self._cumulative_actual_return)** (252 / len(self._current_all_actuals)) - 1
+        self._actual_annualized_returns_old.append(actual_annualized_return_old)
         actual_daily_returns = np.array(self._current_all_actuals)
+        actual_annualized_return = (self._get_buy_and_hold(dataset_type)+1)** (252 / len(self._current_all_actuals)) - 1
+        self._actual_annualized_returns.append(actual_annualized_return)
         actual_annualized_risk = np.std(actual_daily_returns) * (252 ** 0.5)
         self._actual_return_on_risk.append(actual_annualized_return / actual_annualized_risk if actual_annualized_risk != 0 else 0)
-        self._all_actual_returns.append(actual_annualized_return)
+
+    def _get_buy_and_hold(self, dataset_type) -> float:
+        asset = self._targets[self._target_item].replace('_target','').capitalize()
+        output_for_asset = pd.read_csv(f'resources/input/preprocessed/{asset}_output.csv')
+        evaluation_set = getattr(self,f'_{dataset_type}_data')
+        first_date= evaluation_set['date'].iloc[self._config['hyperparameters']['common']['max_encoder_length']]
+        last_date = evaluation_set['date'].iloc[-1]
+        first_value = output_for_asset.loc[output_for_asset['date'] == first_date, 'open'].iloc[0]
+        last_value = output_for_asset.loc[output_for_asset['date'] == last_date, 'close'].iloc[0]
+        return last_value/first_value-1
 
     def _obtain_aggregate_metrics(self, metrics_to_obtain_average):
         weighted_av_metrics = []
@@ -437,7 +448,8 @@ class BaseModelBuilder(ABC):
         self._aggregated_return_on_risk = weighted_av_metrics[3]
         naive_rmse = sum(self._naive_forecast_rmse)/len(self._nb_trades)
         actual_return_risk = sum(self._actual_return_on_risk)/len(self._nb_trades)
-        actual_return = sum(self._all_actual_returns)/len(self._nb_trades)
+        actual_return = sum(self._actual_annualized_returns)/len(self._nb_trades)
+        old_actual_return = sum(self._actual_annualized_returns_old)/len(self._nb_trades)
         individual_returns = [tens.item() for tens in self._returns_on_trade_all]
         window = str(self._window)
         if not dataset_type in self._window_metrics:
@@ -449,6 +461,7 @@ class BaseModelBuilder(ABC):
             "rmse_vs_naive": weighted_av_metrics[0] / naive_rmse if naive_rmse!=0 else 0,
             "annualized_return": weighted_av_metrics[3].item(),
             "actual_annualized_return": actual_return,
+            "old_actual_return" : old_actual_return,
             "ann_return_on_risk": weighted_av_metrics[2].item(),
             "ann_actual_return_on_risk": actual_return_risk,
             "max_drawdown": self._max_drawdown_all,
@@ -508,11 +521,11 @@ class ModelBuilder(BaseModelBuilder):
 
         for model in self._config["hyperparameters"]["models"]:
 
-            for window in range(self._config['common']['sliding_windows']):
+            for window in range(self._config['common']['cross_validation']['sliding_windows']):
                 self._window= window
                 self._initialize_variables()
                 self._model_name = model
-                if self._config['common']['sliding_windows'] != 1:
+                if self._config['common']['cross_validation']['is_running']:
                     self._window_model_dir = f'models/{self._model_name}/window_{window}/'
                     has_sliding_windows = True
                 else :
@@ -529,7 +542,7 @@ class ModelBuilder(BaseModelBuilder):
                 self._obtain_dataloader()
                 self._train_model(self._config_manager.hyperparameters,has_sliding_windows = has_sliding_windows)
                 self._obtain_best_model()
-                if self._config['common']['sliding_windows'] != 1:
+                if self._config['common']['cross_validation']['is_running']:
                     self._coordinate_evaluation(dataset_to_evaluate=['predict'])
                     self._dataset_type = 'predict'
                     self._current_metrics =  {}
@@ -546,7 +559,7 @@ class ModelBuilder(BaseModelBuilder):
                 self._coordinate_interpretions()
                 self._save_run_information()
 
-            if self._config['common']['sliding_windows'] != 1:
+            if self._config['common']['cross_validation']['is_running']:
                 self._model_dir =f'models/{self._model_name}'
                 self._obtain_average_for_metrics()
                 self._save_metrics_aggregate()

@@ -124,16 +124,16 @@ class DataProcessorHelper:
         data_length_for_sliding = self._test_split_index
         train_ratio = self._config["common"]["train_test_split"][0]
         predict_ratio = self._config["common"]["train_test_split"][1]
-        total_ratio = train_ratio + predict_ratio*self._config['common']['sliding_windows']
+        total_ratio = train_ratio + predict_ratio*self._config['common']['cross_validation']['sliding_windows']
 
-        for window in range(self._config['common']['sliding_windows']):
+        for window in range(self._config['common']['cross_validation']['sliding_windows']):
             train_index = int((train_ratio+window*predict_ratio)*data_length_for_sliding/total_ratio)
             begin_train_index = int(window*predict_ratio*data_length_for_sliding/total_ratio)
             self._train_split_index.append(train_index)
             self._begin_train_index.append(begin_train_index)
 
 
-            if window == self._config['common']['sliding_windows'] - 1:
+            if window == self._config['common']['cross_validation']['sliding_windows'] - 1:
                 predict_index = data_length_for_sliding
             else:
                 predict_index = int((train_ratio + (
@@ -183,7 +183,7 @@ class DataForModelSelector:
         self._datasets = DATASETS
 
     def run(self) -> None:
-        for window in range(self._config['common']['sliding_windows']):
+        for window in range(self._config['common']['cross_validation']['sliding_windows']):
             last_data = {}
             for dataset in self._datasets:
                 for sources in self._config["output"]:
@@ -331,7 +331,7 @@ class DataForModelSelector:
                         f"Mismatch in 'time' and 'date' values for test files")
                 continue
 
-            for window in range(self._config['common']["sliding_windows"]):
+            for window in range(self._config['common']['cross_validation']['sliding_windows']):
                 loop_files = [f for f in all_files if
                               f.endswith(f'{dataset}_{window}.csv')]
                 if len(loop_files) != 3:
@@ -354,7 +354,7 @@ class DataForModelSelector:
 
         last_time_in_predict = None
 
-        for loop_item in range(self._config['common']["sliding_windows"]):
+        for loop_item in range(self._config['common']['cross_validation']['sliding_windows']):
 
             train_files = [f for f in all_files if
                            f.endswith(f'train_{loop_item}.csv')]
@@ -960,7 +960,6 @@ class BaseDataProcessor(ABC):
             )
 
 
-
     def _run_common_fetch(self):
         start_date = self._config["common"]["start_date"]
         end_date = self._config["common"]["end_date"]
@@ -1023,7 +1022,7 @@ class BaseDataProcessor(ABC):
                 condition=self._config["common"]["preprocessing"]
             )
             if self._running_app != 'trader':
-                for window in range(self._config['common']["sliding_windows"]):
+                for window in range(self._config['common']['cross_validation']['sliding_windows']):
                     self._sliding_window = window
                     self._execute_if_not_dropped(
                         self._feature_engineering_strategy.run_feature_engineering,

@@ -70,6 +70,7 @@ class ConfigManager:
 
         self._add_ticker_dynamically()
         self._assign_inputs()
+        self._assign_cv_values()
         if self.running_app != 'trader':
             self._config['specific_config'] = {}
             self._assign_common_config()
@@ -103,6 +104,10 @@ class ConfigManager:
                     dynamic_data = self._load_data_dynamically(sub_dict["source"], subname)
                     sub_dict["data"].extend(dynamic_data)
             sub_dict["data"] = list(set(sub_dict["data"]))
+
+    def _assign_cv_values(self):
+        if not self._config['common']['cross_validation']['is_running'] :
+            self._config['common']['cross_validation']['sliding_windows'] = 1
 
     def _load_data_dynamically(self, source: str, subname : Optional[str] ='') -> List[str]:
         file_path = f"resources/configs/dynamic_ticker/{source}{subname}_daily.txt"

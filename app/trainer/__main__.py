@@ -51,7 +51,7 @@ if __name__ == "__main__":
             is_input_feature=is_input,
         ).run()
     if config_manager.config["inputs"]["future_covariates"]["data"]:
-        for window in range(config_manager.config['common']['sliding_windows']):
+        for window in range(config_manager.config['common']['cross_validation']['sliding_windows']):
             FutureCovariatesProcessor(
                 config_manager, data_processor_helper, sliding_window=window
             ).run()

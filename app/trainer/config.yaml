@@ -3,16 +3,17 @@ common :
   end_date : '2023-12-20'
   max_missing_data : .02
   fetching : False
-  preprocessing : True
-  engineering : True
-  sliding_windows : 3
+  preprocessing : False
+  engineering : False
   model_phase : 'train'
   min_nb_trades : 20
   train_test_split : [.8,.10,.10]
   min_validation_forecasts : 95
   make_data_stationary: True
   attributes_to_discard: ["volume","split coefficient","adjusted close", "adj close"]
-
+  cross_validation :
+    is_running : False
+    sliding_windows: 3
   features_engineering :
     check_bell_shape: False
     pca_variance : 1
@@ -65,6 +66,7 @@ output :
     data :
       - 'SPY'
       - 'AAPL'
+
 
 hyperparameters:
   common:
